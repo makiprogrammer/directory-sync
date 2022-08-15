@@ -3,8 +3,11 @@
 	"version": "0.1.0",
 	"description": "Small console utility to ensure sync state between 2 folders.",
 	"main": "dist/index.js",
+	"bin": {
+		"dirsync": "./dist/index.js"
+	},
 	"scripts": {
-		"start": "npx tsc && node dist/index.js",
+		"start": "npx tsc && node .",
 		"test": "echo \"Error: no test specified\" && exit 1"
 	},
 	"repository": {
