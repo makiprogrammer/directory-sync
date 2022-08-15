@@ -1,0 +1,23 @@
+{
+	"name": "directory-sync",
+	"version": "0.1.0",
+	"description": "Small console utility to ensure sync state between 2 folders.",
+	"main": "dist/index.js",
+	"scripts": {
+		"start": "npx tsc && node dist/index.js",
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/makiprogrammer/directory-sync.git"
+	},
+	"author": "Filip Makara",
+	"license": "ISC",
+	"bugs": {
+		"url": "https://github.com/makiprogrammer/directory-sync/issues"
+	},
+	"homepage": "https://github.com/makiprogrammer/directory-sync#readme",
+	"devDependencies": {
+		"typescript": "^4.7.4"
+	}
+}
