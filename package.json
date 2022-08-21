@@ -1,7 +1,7 @@
 {
 	"name": "directory-sync",
 	"version": "0.1.0",
-	"description": "Small console utility to ensure sync state between 2 folders.",
+	"description": "Small console utility to ensure synced state between 2 folders.",
 	"main": "dist/index.js",
 	"bin": {
 		"dirsync": "./dist/index.js"

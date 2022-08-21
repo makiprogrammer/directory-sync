@@ -15,7 +15,7 @@ program
 	.argument("<dir2>", "second directory")
 	.option(
 		"-d, --depth <depth>",
-		"maximum depth of subdirectories to analyse (default to 10), -1 for unlimited",
+		"maximum depth of subdirectories to analyse, -1 for unlimited",
 		"10"
 	)
 	// .option("-o, --output-file <file>", "output file")
