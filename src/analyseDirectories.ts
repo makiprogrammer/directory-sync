@@ -5,9 +5,7 @@ import { bold } from "chalk";
 import { getFolder, compareFolders, Diff } from "./folders";
 import { groupByComputedValue, logError, logGreen, logRed, logWarning, logYellow } from "./utils";
 
-interface Options {
-	depth: string; // cannot be a number, because commander doesn't allow that
-}
+interface Options {}
 
 function errorChecking(dir1: string, dir2: string, options: Options) {
 	let error = false;
@@ -17,13 +15,6 @@ function errorChecking(dir1: string, dir2: string, options: Options) {
 	}
 	if (!fse.existsSync(dir2)) {
 		logError(`Directory "${dir2}" does not exist.`);
-		error = true;
-	}
-	if (isNaN(Number(options.depth))) {
-		logError(`Depth "${options.depth}" is not a number.`);
-		error = true;
-	} else if (Number(options.depth) % 1 !== 0) {
-		logError(`Depth "${options.depth}" is not a whole number.`);
 		error = true;
 	}
 	// using variable, because we want to list all possible errors
@@ -87,11 +78,10 @@ function displayDifferences(diffs: Diff[]) {
 
 export default function analyseDirectories(dir1: string, dir2: string, options: Options) {
 	if (errorChecking(dir1, dir2, options)) return;
-	const maxDepth = Number(options.depth);
 
 	// get sub-directories and files
-	const folder1 = getFolder(dir1, 0, maxDepth);
-	const folder2 = getFolder(dir2, 0, maxDepth);
+	const folder1 = getFolder(dir1);
+	const folder2 = getFolder(dir2);
 
 	// compare sub-directories and files
 	if (folder1.name !== folder2.name)

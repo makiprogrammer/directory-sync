@@ -15,11 +15,6 @@ program
 	.description("Analyse two directories. The results will be printed to the console.")
 	.argument("<dir1>", "first directory")
 	.argument("<dir2>", "second directory")
-	.option(
-		"-d, --depth <depth>",
-		"maximum depth of subdirectories to analyse, -1 for unlimited",
-		"10"
-	)
 	// .option("-o, --output-file <file>", "output file")
 	.action(analyseDirectories);
 

@@ -23,7 +23,7 @@ export interface Diff {
 	foldersIn2: Set<string>;
 }
 
-export function getFolder(dir: string, depth: number, maxDepth: number): Folder {
+export function getFolder(dir: string, depth: number = 0): Folder {
 	// list all children of the directory
 	const dirents = fse.readdirSync(dir, { withFileTypes: true });
 	const files = dirents
@@ -37,15 +37,11 @@ export function getFolder(dir: string, depth: number, maxDepth: number): Folder 
 
 	return {
 		path: dir,
-		depth: depth,
+		depth,
 
 		name: path.basename(dir),
 		files: files,
-		folders:
-			// recursion end condition
-			depth <= maxDepth
-				? folders.map(f => getFolder(path.join(dir, f), depth + 1, maxDepth))
-				: [],
+		folders: folders.map(f => getFolder(path.join(dir, f), depth + 1)),
 		isEmpty: !(files.length + folders.length),
 	};
 }
