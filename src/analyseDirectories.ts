@@ -3,7 +3,15 @@ import path from "path";
 import { bold } from "chalk";
 
 import { getFolder, compareFolders, Diff } from "./folders";
-import { groupByComputedValue, logError, logGreen, logRed, logWarning, logYellow } from "./utils";
+import {
+	groupByValue,
+	isNonEmptyDiff,
+	logError,
+	logGreen,
+	logRed,
+	logWarning,
+	logYellow,
+} from "./utils";
 
 interface Options {
 	outputFile?: string;
@@ -26,19 +34,14 @@ function jsonDifferences(diffs: Diff[]) {
 			foldersExtraIn2: diffs.reduce((acc, diff) => acc + diff.foldersIn2.size, 0),
 			datetime: new Date().toISOString(),
 		},
-		diffs: diffs
-			.filter(
-				({ filesIn1, filesIn2, foldersIn1, foldersIn2 }) =>
-					filesIn1.size + filesIn2.size + foldersIn1.size + foldersIn2.size
-			)
-			.map(diff => ({
-				folder1: diff.folder1.path,
-				folder2: diff.folder2.path,
-				filesExtraIn1: [...diff.filesIn1],
-				filesExtraIn2: [...diff.filesIn2],
-				foldersExtraIn1: [...diff.foldersIn1],
-				foldersExtraIn2: [...diff.foldersIn2],
-			})),
+		diffs: diffs.filter(isNonEmptyDiff).map(diff => ({
+			folder1: diff.folder1.path,
+			folder2: diff.folder2.path,
+			filesExtraIn1: [...diff.filesIn1],
+			filesExtraIn2: [...diff.filesIn2],
+			foldersExtraIn1: [...diff.foldersIn1],
+			foldersExtraIn2: [...diff.foldersIn2],
+		})),
 	};
 }
 
@@ -58,7 +61,7 @@ function displayDifferences(diffs: Diff[]) {
 
 	diffs.forEach(({ folder1, folder2, filesIn1, filesIn2, foldersIn1, foldersIn2 }) => {
 		// files exclusive to folder1
-		groupByComputedValue([...filesIn1], path.extname).map(({ value: fileExtension, items }) => {
+		groupByValue([...filesIn1], path.extname).map(({ value: fileExtension, items }) => {
 			if (items.length > 10)
 				return logGreen(
 					` + ${folder1.path}: total of ${items.length} files with extension ${bold(
@@ -68,7 +71,7 @@ function displayDifferences(diffs: Diff[]) {
 			items.forEach(filename => logGreen(` + ${path.join(folder1.path, bold(filename))}`));
 		});
 		// files exclusive to folder2
-		groupByComputedValue([...filesIn2], path.extname).map(({ value: fileExtension, items }) => {
+		groupByValue([...filesIn2], path.extname).map(({ value: fileExtension, items }) => {
 			if (items.length > 10)
 				return logRed(
 					` - ${folder2.path}: total of ${items.length} files with extension ${bold(

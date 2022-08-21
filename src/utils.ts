@@ -1,4 +1,8 @@
+import fs from "fs";
+import readline from "readline";
 import chalk from "chalk";
+
+import { Diff } from "./folders";
 
 export const systemFiles = new Set(["desktop.ini"]);
 export const systemFolders = new Set(["System Volume Information"]);
@@ -23,6 +27,18 @@ export function logYellow(message: string) {
 	console.log(chalk.yellow(message));
 }
 
+export async function askYesOrNo(question: string) {
+	return new Promise(resolve => {
+		const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+		rl.question(question, answer => {
+			rl.close();
+			if (!answer) return resolve(false);
+			if (["y", "yes"].includes(answer.toLowerCase())) return resolve(true);
+			resolve(false);
+		});
+	});
+}
+
 // set operations
 export function getDifference<T>(set1: Set<T>, set2: Set<T>) {
 	return new Set([...set1].filter(element => !set2.has(element)));
@@ -35,7 +51,7 @@ export function getIntersection<T>(set1: Set<T>, set2: Set<T>) {
  * Values in the final array are in the same order of occurrence as in the original array.
  * Example: from `[{a:1}, {a:1}, {a:2}]` returns `[{value: 1, items: [{a:1}, {a:1}]}, {value: 2, items: [{a:2}]}]`
  * if we are evaluating property `a`. */
-export function groupByComputedValue<T>(
+export function groupByValue<T>(
 	items: T[],
 	value: (item: T) => string | number
 ): { value?: string | number; items: T[] }[] {
@@ -52,4 +68,8 @@ export function groupByComputedValue<T>(
 		final[propToIndex[prop]].items.push(item);
 	});
 	return final;
+}
+
+export function isNonEmptyDiff({ filesIn1, filesIn2, foldersIn1, foldersIn2 }: Diff) {
+	return filesIn1.size + filesIn2.size + foldersIn1.size + foldersIn2.size;
 }
