@@ -1,97 +1,12 @@
 import fse from "fs-extra";
 import path from "path";
+import { bold } from "chalk";
 
-import {
-	countValues,
-	getDifference,
-	getIntersection,
-	logColor,
-	logError,
-	logWarning,
-	systemFiles,
-	systemFolders,
-} from "./utils";
-
-interface Folder {
-	path: string;
-	depth: number;
-
-	name: string;
-	files: string[];
-	folders: Folder[];
-}
+import { getFolder, compareFolders, Diff } from "./folders";
+import { groupByComputedValue, logError, logGreen, logRed, logWarning, logYellow } from "./utils";
 
 interface Options {
 	depth: string; // cannot be a number, because commander doesn't allow that
-}
-
-function getFolder(dir: string, depth: number, maxDepth: number): Folder {
-	// list all children of the directory
-	const dirents = fse.readdirSync(dir, { withFileTypes: true });
-	const files = dirents
-		.filter(d => !d.isDirectory())
-		.map(d => d.name)
-		.filter(f => !systemFiles.has(f));
-	const folders = dirents
-		.filter(d => d.isDirectory())
-		.map(d => d.name)
-		.filter(f => !systemFolders.has(f));
-
-	return {
-		path: dir,
-		depth: depth,
-
-		name: path.basename(dir),
-		files: files,
-		// recursion end condition
-		folders:
-			depth <= maxDepth
-				? folders.map(f => getFolder(path.join(dir, f), depth + 1, maxDepth))
-				: [],
-	};
-}
-
-function compareFolders(folder1: Folder, folder2: Folder) {
-	// compare files first
-	const files1 = new Set(folder1.files);
-	const files2 = new Set(folder2.files);
-
-	const extra1 = getDifference(files1, files2);
-	const extra2 = getDifference(files2, files1);
-
-	if (extra1.size) {
-		logColor(`Files in "${folder1.path}" are not in "${folder2.path}":`);
-		if (extra1.size > 15)
-			console.log(countValues([...extra1].map(filename => path.extname(filename))));
-		else extra1.forEach(file => console.log(` - ${file}`));
-	}
-	if (extra2.size) {
-		logColor(`Files in "${folder2.path}" are not in "${folder1.path}":`);
-		if (extra2.size > 15)
-			console.log(countValues([...extra2].map(filename => path.extname(filename))));
-		else extra2.forEach(file => console.log(` - ${file}`));
-	}
-
-	// compare folders
-	const folders1 = new Set(folder1.folders.map(f => f.name));
-	const folders2 = new Set(folder2.folders.map(f => f.name));
-	const extraFolders1 = getDifference(folders1, folders2);
-	const extraFolders2 = getDifference(folders2, folders1);
-	if (extraFolders1.size > 0) {
-		logColor(`Folders in "${folder1.path}" are not in "${folder2.path}":`);
-		extraFolders1.forEach(folder => console.log(` - ${folder}`));
-	}
-	if (extraFolders2.size > 0) {
-		logColor(`Folders in "${folder2.path}" are not in "${folder1.path}":`);
-		extraFolders2.forEach(folder => console.log(` - ${folder}`));
-	}
-
-	// compare common folders
-	getIntersection(folders1, folders2).forEach(folderName => {
-		const subfolder1 = folder1.folders.find(f => f.name === folderName) as Folder;
-		const subfolder2 = folder2.folders.find(f => f.name === folderName) as Folder;
-		compareFolders(subfolder1, subfolder2);
-	});
 }
 
 function errorChecking(dir1: string, dir2: string, options: Options) {
@@ -115,6 +30,61 @@ function errorChecking(dir1: string, dir2: string, options: Options) {
 	return error;
 }
 
+function displayDifferences(diffs: Diff[]) {
+	const totalFilesExtra = diffs.reduce((acc, diff) => acc + diff.filesIn1.size, 0);
+	const totalFilesLacking = diffs.reduce((acc, diff) => acc + diff.filesIn2.size, 0);
+	const totalFoldersExtra = diffs.reduce((acc, diff) => acc + diff.foldersIn1.size, 0);
+	const totalFoldersLacking = diffs.reduce((acc, diff) => acc + diff.foldersIn2.size, 0);
+	if (totalFilesExtra + totalFoldersExtra)
+		logYellow(
+			`${totalFilesExtra} file(s) and ${totalFoldersExtra} folder(s) were found exclusive in 1st directory tree.`
+		);
+	if (totalFilesLacking + totalFoldersLacking)
+		logYellow(
+			`${totalFilesLacking} file(s) and ${totalFoldersLacking} folder(s) were found exclusive in 2nd directory tree.`
+		);
+
+	diffs.forEach(({ folder1, folder2, filesIn1, filesIn2, foldersIn1, foldersIn2 }) => {
+		// files exclusive to folder1
+		groupByComputedValue([...filesIn1], path.extname).map(({ value: fileExtension, items }) => {
+			if (items.length > 10)
+				return logGreen(
+					` + ${folder1.path}: total of ${items.length} files with extension ${bold(
+						fileExtension
+					)}`
+				);
+			items.forEach(filename => logGreen(` + ${path.join(folder1.path, bold(filename))}`));
+		});
+		// files exclusive to folder2
+		groupByComputedValue([...filesIn2], path.extname).map(({ value: fileExtension, items }) => {
+			if (items.length > 10)
+				return logRed(
+					` - ${folder2.path}: total of ${items.length} files with extension ${bold(
+						fileExtension
+					)}`
+				);
+			items.forEach(filename => logRed(` - ${path.join(folder2.path, bold(filename))}`));
+		});
+
+		// folders exclusive to folder1
+		if (foldersIn1.size) {
+			if (foldersIn1.size > 10)
+				logGreen(` + ${folder1.path}: total of ${bold(foldersIn1.size)} folders`);
+			else
+				foldersIn1.forEach(folder =>
+					logGreen(` + ${path.join(folder1.path, bold(folder))}`)
+				);
+		}
+		// folders exclusive to folder2
+		if (foldersIn2.size) {
+			if (foldersIn2.size > 10)
+				logRed(` - ${folder2.path}: total of ${bold(foldersIn2.size)} folders`);
+			else
+				foldersIn2.forEach(folder => logRed(` - ${path.join(folder2.path, bold(folder))}`));
+		}
+	});
+}
+
 export default function analyseDirectories(dir1: string, dir2: string, options: Options) {
 	if (errorChecking(dir1, dir2, options)) return;
 	const maxDepth = Number(options.depth);
@@ -126,5 +96,5 @@ export default function analyseDirectories(dir1: string, dir2: string, options: 
 	// compare sub-directories and files
 	if (folder1.name !== folder2.name)
 		logWarning(`Root folder names differ: "${folder1.name}" and "${folder2.name}"`);
-	compareFolders(folder1, folder2);
+	displayDifferences(compareFolders(folder1, folder2));
 }

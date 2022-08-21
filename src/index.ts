@@ -9,8 +9,10 @@ const program = new Command();
 program.name("dirsync").description("CLI to syncing directories");
 
 program
-	.command("a")
-	.description("Analyze two directories. The results will be printed to the console.")
+	.command("analyse")
+	.alias("a")
+	.alias("analyze")
+	.description("Analyse two directories. The results will be printed to the console.")
 	.argument("<dir1>", "first directory")
 	.argument("<dir2>", "second directory")
 	.option(
