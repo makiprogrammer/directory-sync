@@ -5,20 +5,41 @@ import { bold } from "chalk";
 import { getFolder, compareFolders, Diff } from "./folders";
 import { groupByComputedValue, logError, logGreen, logRed, logWarning, logYellow } from "./utils";
 
-interface Options {}
+interface Options {
+	outputFile?: string;
+}
 
 function errorChecking(dir1: string, dir2: string, options: Options) {
-	let error = false;
-	if (!fse.existsSync(dir1)) {
-		logError(`Directory "${dir1}" does not exist.`);
-		error = true;
-	}
-	if (!fse.existsSync(dir2)) {
-		logError(`Directory "${dir2}" does not exist.`);
-		error = true;
-	}
-	// using variable, because we want to list all possible errors
-	return error;
+	const errors = [];
+	if (!fse.existsSync(dir1)) errors.push(`Directory "${dir1}" does not exist.`);
+	if (!fse.existsSync(dir2)) errors.push(`Directory "${dir2}" does not exist.`);
+	errors.forEach(logError);
+	return errors;
+}
+
+function jsonDifferences(diffs: Diff[]) {
+	return {
+		stats: {
+			filesExtraIn1: diffs.reduce((acc, diff) => acc + diff.filesIn1.size, 0),
+			filesExtraIn2: diffs.reduce((acc, diff) => acc + diff.filesIn2.size, 0),
+			foldersExtraIn1: diffs.reduce((acc, diff) => acc + diff.foldersIn1.size, 0),
+			foldersExtraIn2: diffs.reduce((acc, diff) => acc + diff.foldersIn2.size, 0),
+			datetime: new Date().toISOString(),
+		},
+		diffs: diffs
+			.filter(
+				({ filesIn1, filesIn2, foldersIn1, foldersIn2 }) =>
+					filesIn1.size + filesIn2.size + foldersIn1.size + foldersIn2.size
+			)
+			.map(diff => ({
+				folder1: diff.folder1.path,
+				folder2: diff.folder2.path,
+				filesExtraIn1: [...diff.filesIn1],
+				filesExtraIn2: [...diff.filesIn2],
+				foldersExtraIn1: [...diff.foldersIn1],
+				foldersExtraIn2: [...diff.foldersIn2],
+			})),
+	};
 }
 
 function displayDifferences(diffs: Diff[]) {
@@ -77,14 +98,21 @@ function displayDifferences(diffs: Diff[]) {
 }
 
 export default function analyseDirectories(dir1: string, dir2: string, options: Options) {
-	if (errorChecking(dir1, dir2, options)) return;
+	if (errorChecking(dir1, dir2, options).length) return;
 
 	// get sub-directories and files
 	const folder1 = getFolder(dir1);
 	const folder2 = getFolder(dir2);
 
-	// compare sub-directories and files
 	if (folder1.name !== folder2.name)
 		logWarning(`Root folder names differ: "${folder1.name}" and "${folder2.name}"`);
-	displayDifferences(compareFolders(folder1, folder2));
+
+	// compare sub-directories and files
+	const diffs = compareFolders(folder1, folder2);
+
+	if (options.outputFile) {
+		// save to the file
+		fse.writeFileSync(options.outputFile, JSON.stringify(jsonDifferences(diffs), null, "\t"));
+		logGreen(`Results saved to ${options.outputFile}`);
+	} else displayDifferences(diffs);
 }
