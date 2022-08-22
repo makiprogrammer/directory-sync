@@ -2,16 +2,8 @@ import fse from "fs-extra";
 import path from "path";
 import { bold } from "chalk";
 
-import { getFolder, compareFolders, Diff } from "./folders";
-import {
-	groupByValue,
-	isNonEmptyDiff,
-	logError,
-	logGreen,
-	logRed,
-	logWarning,
-	logYellow,
-} from "./utils";
+import getDifferences, { Folder } from "./diffs";
+import { groupByValue, logError, logGreen, logRed, logWarning, logYellow } from "./utils";
 
 interface Options {
 	outputFile?: string;
@@ -25,97 +17,59 @@ function errorChecking(dir1: string, dir2: string, options: Options) {
 	return errors;
 }
 
-function jsonDifferences(diffs: Diff[]) {
+function jsonDifference(diff: Folder): unknown {
 	return {
-		stats: {
-			filesExtraIn1: diffs.reduce((acc, diff) => acc + diff.filesIn1.size, 0),
-			filesExtraIn2: diffs.reduce((acc, diff) => acc + diff.filesIn2.size, 0),
-			foldersExtraIn1: diffs.reduce((acc, diff) => acc + diff.foldersIn1.size, 0),
-			foldersExtraIn2: diffs.reduce((acc, diff) => acc + diff.foldersIn2.size, 0),
-			datetime: new Date().toISOString(),
-		},
-		diffs: diffs.filter(isNonEmptyDiff).map(diff => ({
-			folder1: diff.folder1.path,
-			folder2: diff.folder2.path,
-			filesExtraIn1: [...diff.filesIn1],
-			filesExtraIn2: [...diff.filesIn2],
-			foldersExtraIn1: [...diff.foldersIn1],
-			foldersExtraIn2: [...diff.foldersIn2],
-		})),
+		...diff,
+		filesOnlyHere: [...diff.filesOnlyHere],
+		foldersOnlyHere: [...diff.foldersOnlyHere],
+		subDirs: diff.subDirs.map(jsonDifference),
 	};
 }
 
-function displayDifferences(diffs: Diff[]) {
-	const totalFilesExtra = diffs.reduce((acc, diff) => acc + diff.filesIn1.size, 0);
-	const totalFilesLacking = diffs.reduce((acc, diff) => acc + diff.filesIn2.size, 0);
-	const totalFoldersExtra = diffs.reduce((acc, diff) => acc + diff.foldersIn1.size, 0);
-	const totalFoldersLacking = diffs.reduce((acc, diff) => acc + diff.foldersIn2.size, 0);
-	if (totalFilesExtra + totalFoldersExtra)
-		logYellow(
-			`${totalFilesExtra} file(s) and ${totalFoldersExtra} folder(s) were found exclusive in 1st directory tree.`
-		);
-	if (totalFilesLacking + totalFoldersLacking)
-		logYellow(
-			`${totalFilesLacking} file(s) and ${totalFoldersLacking} folder(s) were found exclusive in 2nd directory tree.`
-		);
+function displayDifferences(diffs: [Folder, Folder]) {
+	const [dir1, dir2] = diffs;
 
-	diffs.forEach(({ folder1, folder2, filesIn1, filesIn2, foldersIn1, foldersIn2 }) => {
-		// files exclusive to folder1
-		groupByValue([...filesIn1], path.extname).map(({ value: fileExtension, items }) => {
-			if (items.length > 10)
-				return logGreen(
-					` + ${folder1.path}: total of ${items.length} files with extension ${bold(
-						fileExtension
-					)}`
-				);
-			items.forEach(filename => logGreen(` + ${path.join(folder1.path, bold(filename))}`));
-		});
-		// files exclusive to folder2
-		groupByValue([...filesIn2], path.extname).map(({ value: fileExtension, items }) => {
-			if (items.length > 10)
-				return logRed(
-					` - ${folder2.path}: total of ${items.length} files with extension ${bold(
-						fileExtension
-					)}`
-				);
-			items.forEach(filename => logRed(` - ${path.join(folder2.path, bold(filename))}`));
-		});
-
-		// folders exclusive to folder1
-		if (foldersIn1.size) {
-			if (foldersIn1.size > 10)
-				logGreen(` + ${folder1.path}: total of ${bold(foldersIn1.size)} folders`);
-			else
-				foldersIn1.forEach(folder =>
-					logGreen(` + ${path.join(folder1.path, bold(folder))}`)
-				);
-		}
-		// folders exclusive to folder2
-		if (foldersIn2.size) {
-			if (foldersIn2.size > 10)
-				logRed(` - ${folder2.path}: total of ${bold(foldersIn2.size)} folders`);
-			else
-				foldersIn2.forEach(folder => logRed(` - ${path.join(folder2.path, bold(folder))}`));
-		}
+	// files only in dir1
+	groupByValue([...dir1.filesOnlyHere], path.extname).map(({ value: extension, items }) => {
+		if (items.length > 10)
+			return logGreen(
+				` + ${dir1.path}: total of ${items.length} files with extension ${bold(extension)}`
+			);
+		items.forEach(filename => logGreen(` + ${path.join(dir1.path, bold(filename))}`));
 	});
+	// files only in dir2
+	groupByValue([...dir2.filesOnlyHere], path.extname).map(({ value: extension, items }) => {
+		if (items.length > 10)
+			return logRed(
+				` - ${dir2.path}: total of ${items.length} files with extension ${bold(extension)}`
+			);
+		items.forEach(filename => logRed(` - ${path.join(dir2.path, bold(filename))}`));
+	});
+
+	// folders only in dir1
+	if (dir1.foldersOnlyHere.size) {
+		if (dir1.foldersOnlyHere.size > 10)
+			logGreen(` + ${dir1.path}: total of ${bold(dir1.foldersOnlyHere.size)} folders`);
+		else dir1.foldersOnlyHere.forEach(f => logGreen(` + ${path.join(dir1.path, bold(f))}`));
+	}
+	// folders exclusive to folder2
+	if (dir2.foldersOnlyHere.size) {
+		if (dir2.foldersOnlyHere.size > 10)
+			logRed(` - ${dir2.path}: total of ${bold(dir2.foldersOnlyHere.size)} folders`);
+		else dir2.foldersOnlyHere.forEach(f => logRed(` - ${path.join(dir2.path, bold(f))}`));
+	}
 }
 
 export default function analyseDirectories(dir1: string, dir2: string, options: Options) {
 	if (errorChecking(dir1, dir2, options).length) return;
 
-	// get sub-directories and files
-	const folder1 = getFolder(dir1);
-	const folder2 = getFolder(dir2);
-
-	if (folder1.name !== folder2.name)
-		logWarning(`Root folder names differ: "${folder1.name}" and "${folder2.name}"`);
-
-	// compare sub-directories and files
-	const diffs = compareFolders(folder1, folder2);
+	const diffs = getDifferences(dir1, dir2);
+	if (diffs[0].name !== diffs[1].name)
+		logWarning(`Root folder names differ: "${diffs[0].name}" and "${diffs[1].name}"`);
 
 	if (options.outputFile) {
 		// save to the file
-		fse.writeFileSync(options.outputFile, JSON.stringify(jsonDifferences(diffs), null, "\t"));
+		fse.writeFileSync(options.outputFile, JSON.stringify(diffs.map(jsonDifference)));
 		logGreen(`Results saved to ${options.outputFile}`);
 	} else displayDifferences(diffs);
 }

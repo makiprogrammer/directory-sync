@@ -1,9 +1,31 @@
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { bold, cyan, magenta } from "chalk";
 import fse from "fs-extra";
-import path from "path";
+const { version } = require("../package.json");
 
-import { getFolder, compareFolders, Folder } from "./folders";
-import { askYesOrNo, groupByValue, isNonEmptyDiff, logError, logGreen, logWarning } from "./utils";
+import getDifferences, { Folder } from "./diffs";
+import { askYesOrNo, groupByValue, logError, logGreen, logWarning } from "./utils";
+
+interface ChildDirectory {
+	name: string;
+	ignoreFiles: string[];
+	ignoreFolders: string[];
+	subDirs: ChildDirectory[];
+}
+
+interface RootDirectory extends ChildDirectory {
+	uuid: string;
+	// TODO: maybe add presets for local drives, external backup drives, etc.
+	// TODO: ... and from that derive default behaviour
+}
+
+interface DirsyncConfigFile {
+	lastSyncDate: string;
+	dirsyncVersion: string;
+	dir1: RootDirectory;
+	dir2: RootDirectory;
+}
 
 interface Options {
 	force?: boolean;
@@ -17,28 +39,32 @@ function errorChecking(dir1: string, dir2: string, options: Options) {
 	return errors;
 }
 
-async function copyFile(
-	files: Set<string>,
+async function copyFiles(
 	fromFolder: Folder,
 	toFolder: Folder,
 	questionColor: (str: string) => string,
 	sign: string
 ) {
-	for (const { value: extension, items } of groupByValue([...files], path.extname)) {
-		if (
-			items.length > 10 &&
-			(await askYesOrNo(
-				questionColor(
-					` ${sign} ${fromFolder.path}: total of ${items.length} ${bold(
-						extension
-					)} files (y/n) `
+	const ignored: string[] = []; // list of files that user refused to copy
+	for (const { value: extension, items } of groupByValue(
+		[...fromFolder.filesOnlyHere],
+		path.extname
+	))
+		if (items.length > 10) {
+			if (
+				await askYesOrNo(
+					questionColor(
+						` ${sign} ${fromFolder.path}: total of ${items.length} ${bold(
+							extension
+						)} files (y/n) `
+					)
 				)
-			))
-		)
-			items.forEach(item =>
-				fse.copyFile(path.join(fromFolder.path, item), path.join(toFolder.path, item))
-			);
-		else
+			)
+				items.forEach(item =>
+					fse.copyFile(path.join(fromFolder.path, item), path.join(toFolder.path, item))
+				);
+			else ignored.push(...items);
+		} else
 			for (const item of items)
 				if (
 					await askYesOrNo(
@@ -46,52 +72,71 @@ async function copyFile(
 					)
 				)
 					fse.copyFile(path.join(fromFolder.path, item), path.join(toFolder.path, item));
-	}
+				else ignored.push(item);
+	return ignored;
 }
 
-async function copyFolder(
-	folders: Set<string>,
+async function copyFolders(
 	fromFolder: Folder,
 	toFolder: Folder,
 	questionColor: (str: string) => string,
 	sign: string
 ) {
-	for (const item of folders)
+	const ignored: string[] = []; // folders that user refused to copy
+	for (const item of fromFolder.foldersOnlyHere)
 		if (
 			await askYesOrNo(
 				questionColor(` ${sign} ${path.join(fromFolder.path, bold(item))} (y/n) `)
 			)
 		)
 			fse.copySync(path.join(fromFolder.path, item), path.join(toFolder.path, item));
+		else ignored.push(item);
+	return ignored;
+}
+
+async function syncEverythingWithQuestions([dir1, dir2]: [Folder, Folder]) {
+	// from dir1 to dir2
+	dir1.ignoreFiles = await copyFiles(dir1, dir2, cyan, "dir2 <=");
+	dir1.ignoreFolders = await copyFolders(dir1, dir2, cyan, "dir2 <=");
+	// from dir2 to dir1
+	dir2.ignoreFiles = await copyFiles(dir2, dir1, magenta, "dir1 <=");
+	dir2.ignoreFolders = await copyFolders(dir2, dir1, magenta, "dir1 <=");
+
+	// recursively sync common subdirectories
+	for (const i in dir1.subDirs)
+		await syncEverythingWithQuestions([dir1.subDirs[i], dir2.subDirs[i]]);
+}
+
+function finaliseFolderOutput(folder: Folder): ChildDirectory {
+	return {
+		name: folder.name,
+		ignoreFiles: folder.ignoreFiles || [],
+		ignoreFolders: folder.ignoreFolders || [],
+		subDirs: folder.subDirs.map(finaliseFolderOutput),
+	};
 }
 
 export default async function syncDirectories(dir1: string, dir2: string, options: Options) {
 	if (errorChecking(dir1, dir2, options).length) return;
+	if (options.force) return logError("Force option is not yet implemented.");
 
 	logGreen("Analysing...");
-	// get sub-directories and files
-	const folder1 = getFolder(dir1);
-	const folder2 = getFolder(dir2);
+	let diffs = getDifferences(dir1, dir2);
+	if (diffs[0].name !== diffs[1].name)
+		logWarning(`Root folder names differ: "${diffs[0].name}" and "${diffs[1].name}"`);
 
-	// compare sub-directories and files
-	const diffs = compareFolders(folder1, folder2).filter(isNonEmptyDiff);
-	if (!diffs.length) return logGreen("No differences found.");
-	if (folder1.name !== folder2.name)
-		logWarning(`Root folder names differ: "${folder1.name}" and "${folder2.name}"`);
+	// TODO // logGreen("No differences found.");
 
-	if (options.force) {
-		// TODO
-	} else {
-		for (const { folder1, folder2, filesIn1, filesIn2, foldersIn1, foldersIn2 } of diffs) {
-			// files exclusive to folder1
-			await copyFile(filesIn1, folder1, folder2, cyan, "dir2 <=");
-			// files exclusive to folder2
-			await copyFile(filesIn2, folder2, folder1, cyan, "dir1 <=");
+	await syncEverythingWithQuestions(diffs);
 
-			// folders exclusive to folder1
-			await copyFolder(foldersIn1, folder1, folder2, magenta, "dir2 <=");
-			// folders exclusive to folder2
-			await copyFolder(foldersIn2, folder2, folder1, magenta, "dir1 <=");
-		}
-	}
+	// output result to a file
+	const output: DirsyncConfigFile = {
+		dirsyncVersion: version,
+		lastSyncDate: new Date().toISOString(),
+		dir1: { uuid: randomUUID(), ...finaliseFolderOutput(diffs[0]) },
+		dir2: { uuid: randomUUID(), ...finaliseFolderOutput(diffs[1]) },
+	};
+	// write a copies to each directory
+	fse.writeFileSync(path.join(dir1, "dirsync.config.json"), JSON.stringify(output));
+	fse.writeFileSync(path.join(dir2, "dirsync.config.json"), JSON.stringify(output));
 }

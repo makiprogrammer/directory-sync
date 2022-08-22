@@ -1,11 +1,5 @@
-import fs from "fs";
-import readline from "readline";
+import readline from "node:readline";
 import chalk from "chalk";
-
-import { Diff } from "./folders";
-
-export const systemFiles = new Set(["desktop.ini"]);
-export const systemFolders = new Set(["System Volume Information"]);
 
 // console-logging utils
 export function logError(message: string) {
@@ -17,6 +11,7 @@ export function logWarning(message: string) {
 export function logColor(message: string) {
 	console.log(chalk.bgMagenta(message));
 }
+// TODO: make logColor a function that takes a color and a message
 export function logGreen(message: string) {
 	console.log(chalk.green(message));
 }
@@ -68,8 +63,4 @@ export function groupByValue<T>(
 		final[propToIndex[prop]].items.push(item);
 	});
 	return final;
-}
-
-export function isNonEmptyDiff({ filesIn1, filesIn2, foldersIn1, foldersIn2 }: Diff) {
-	return filesIn1.size + filesIn2.size + foldersIn1.size + foldersIn2.size;
 }
