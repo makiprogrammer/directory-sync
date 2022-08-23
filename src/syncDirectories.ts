@@ -4,7 +4,7 @@ import { bold, cyan, magenta } from "chalk";
 import fse from "fs-extra";
 const { version } = require("../package.json");
 
-import getDifferences, { Folder } from "./diffs";
+import getDifferences, { configFileName, Folder } from "./diffs";
 import { askYesOrNo, groupByValue, logError, logGreen, logWarning } from "./utils";
 
 interface ChildDirectory {
@@ -94,7 +94,17 @@ async function copyFolders(
 	return ignored;
 }
 
-async function syncEverythingWithQuestions([dir1, dir2]: [Folder, Folder]) {
+async function syncEverythingWithQuestions(
+	[dir1, dir2]: [Folder, Folder],
+	configs: [ChildDirectory | undefined, ChildDirectory | undefined]
+) {
+	// remove ignored files & folders
+	[dir1, dir2].forEach((dir, i) => {
+		if (!configs[i]) return;
+		configs[i]?.ignoreFiles?.forEach(f => dir.filesOnlyHere.delete(f));
+		configs[i]?.ignoreFolders?.forEach(f => dir.foldersOnlyHere.delete(f));
+	});
+
 	// from dir1 to dir2
 	dir1.ignoreFiles = await copyFiles(dir1, dir2, cyan, "dir2 <=");
 	dir1.ignoreFolders = await copyFolders(dir1, dir2, cyan, "dir2 <=");
@@ -102,9 +112,32 @@ async function syncEverythingWithQuestions([dir1, dir2]: [Folder, Folder]) {
 	dir2.ignoreFiles = await copyFiles(dir2, dir1, magenta, "dir1 <=");
 	dir2.ignoreFolders = await copyFolders(dir2, dir1, magenta, "dir1 <=");
 
+	// add ignored files to dirs
+	[dir1, dir2].forEach((dir, i) => {
+		if (!configs[i]) return;
+		configs[i]?.ignoreFiles?.forEach(f => dir.ignoreFiles?.push(f));
+		configs[i]?.ignoreFolders?.forEach(f => dir.ignoreFolders?.push(f));
+	});
+
 	// recursively sync common subdirectories
 	for (const i in dir1.subDirs)
-		await syncEverythingWithQuestions([dir1.subDirs[i], dir2.subDirs[i]]);
+		await syncEverythingWithQuestions(
+			[dir1.subDirs[i], dir2.subDirs[i]],
+			[
+				configs[0]?.subDirs.find(subdir => subdir.name === dir1.subDirs[i].name),
+				configs[1]?.subDirs.find(subdir => subdir.name === dir2.subDirs[i].name),
+			]
+		);
+}
+
+function readConfigFiles(dir1: string, dir2: string) {
+	return [dir1, dir2]
+		.map(dir => path.join(dir, configFileName))
+		.map(path =>
+			fse.existsSync(path)
+				? (JSON.parse(fse.readFileSync(path, "utf-8")) as DirsyncConfigFile)
+				: undefined
+		);
 }
 
 function finaliseFolderOutput(folder: Folder): ChildDirectory {
@@ -121,22 +154,32 @@ export default async function syncDirectories(dir1: string, dir2: string, option
 	if (options.force) return logError("Force option is not yet implemented.");
 
 	logGreen("Analysing...");
+	const configFiles = readConfigFiles(dir1, dir2);
+
 	let diffs = getDifferences(dir1, dir2);
-	if (diffs[0].name !== diffs[1].name)
+	if (!configFiles.filter(Boolean).length && diffs[0].name !== diffs[1].name)
 		logWarning(`Root folder names differ: "${diffs[0].name}" and "${diffs[1].name}"`);
 
 	// TODO // logGreen("No differences found.");
 
-	await syncEverythingWithQuestions(diffs);
+	await syncEverythingWithQuestions(diffs, [configFiles[0]?.dir1, configFiles[1]?.dir2]);
 
 	// output result to a file
 	const output: DirsyncConfigFile = {
 		dirsyncVersion: version,
 		lastSyncDate: new Date().toISOString(),
-		dir1: { uuid: randomUUID(), ...finaliseFolderOutput(diffs[0]) },
-		dir2: { uuid: randomUUID(), ...finaliseFolderOutput(diffs[1]) },
+		dir1: {
+			uuid: configFiles[0]?.dir1.uuid ?? randomUUID(),
+			...finaliseFolderOutput(diffs[0]),
+		},
+		dir2: {
+			uuid: configFiles[1]?.dir2.uuid ?? randomUUID(),
+			...finaliseFolderOutput(diffs[1]),
+		},
 	};
 	// write a copies to each directory
 	fse.writeFileSync(path.join(dir1, "dirsync.config.json"), JSON.stringify(output));
 	fse.writeFileSync(path.join(dir2, "dirsync.config.json"), JSON.stringify(output));
+
+	logGreen("Done!");
 }

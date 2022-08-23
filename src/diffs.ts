@@ -3,9 +3,11 @@ import fse from "fs-extra";
 
 import { getDifference, getIntersection } from "./utils";
 
+export const configFileName = "dirsync.config.json";
+
 const systemFiles = new Set(["desktop.ini"]);
 const systemFolders = new Set(["System Volume Information"]);
-const systemNames = new Set([...systemFiles, ...systemFolders, "dirsync.config.json"]);
+const systemNames = new Set([...systemFiles, ...systemFolders, configFileName]);
 
 function getChildren(dir: string) {
 	// readdirsync return list of so-called "dirents"

@@ -21,7 +21,11 @@ program
 	.option("-o, --output-file <file>", "where to write the output of the analysis in JSON format")
 	.option("-f, --force", "asks no questions and syncs everything (not recommended)")
 	.action((dir1, dir2, options) => {
-		if (options.analyse) return analyseDirectories(dir1, dir2, options);
+		if (options.analyse) {
+			if (options.force)
+				logWarning("Specified --force tag is ignored when --analyse mode is activated");
+			return analyseDirectories(dir1, dir2, options);
+		}
 		if (options.outputFile)
 			logWarning("Specified output file has no effect when --analyse is not specified");
 		syncDirectories(dir1, dir2, options);
