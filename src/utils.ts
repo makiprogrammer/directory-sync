@@ -1,6 +1,8 @@
 import readline from "node:readline";
 import chalk from "chalk";
 
+export type UUID = string;
+
 // console-logging utils
 export function logError(message: string) {
 	console.log(chalk.red("Error:", message));
@@ -40,6 +42,9 @@ export function getDifference<T>(set1: Set<T>, set2: Set<T>) {
 }
 export function getIntersection<T>(set1: Set<T>, set2: Set<T>) {
 	return new Set([...set1].filter(element => set2.has(element)));
+}
+export function getUnion<T>(...sets: Set<T>[]) {
+	return new Set(sets.flatMap(set => set.values()));
 }
 
 /** Groups items by a computed primitive value for each item.

@@ -1,21 +1,15 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { bold, cyan, magenta } from "chalk";
+import { bold, magenta } from "chalk";
 import fse from "fs-extra";
 const { version } = require("../package.json");
 
-import getDifferences, { configFileName, Folder } from "./diffs";
-import { askYesOrNo, groupByValue, logError, logGreen, logWarning } from "./utils";
+import { configFileName, FileTree, getFileTreeWithoutIgnoredItems } from "./diffs";
+import { askYesOrNo, groupByValue, logError, logGreen, UUID } from "./utils";
 
-interface ChildDirectory {
-	name: string;
-	ignoreFiles: string[];
-	ignoreFolders: string[];
-	subDirs: ChildDirectory[];
-}
-
-interface RootDirectory extends ChildDirectory {
+interface RootDirectory {
 	uuid: string;
+	ignore: string[];
 	// TODO: maybe add presets for local drives, external backup drives, etc.
 	// TODO: ... and from that derive default behaviour
 }
@@ -23,115 +17,30 @@ interface RootDirectory extends ChildDirectory {
 interface DirsyncConfigFile {
 	lastSyncDate: string;
 	dirsyncVersion: string;
-	dir1: RootDirectory;
-	dir2: RootDirectory;
+	thisDirUuid: string;
+	dirs: RootDirectory[];
 }
 
 interface Options {
 	force?: boolean;
 }
 
-function errorChecking(dir1: string, dir2: string, options: Options) {
+function errorChecking(options: Options, dirs: string[]) {
 	const errors = [];
-	if (!fse.existsSync(dir1)) errors.push(`Directory "${dir1}" does not exist.`);
-	if (!fse.existsSync(dir2)) errors.push(`Directory "${dir2}" does not exist.`);
-	errors.forEach(logError);
-	return errors;
-}
-
-async function copyFiles(
-	fromFolder: Folder,
-	toFolder: Folder,
-	questionColor: (str: string) => string,
-	sign: string
-) {
-	const ignored: string[] = []; // list of files that user refused to copy
-	for (const { value: extension, items } of groupByValue(
-		[...fromFolder.filesOnlyHere],
-		path.extname
-	))
-		if (items.length > 10) {
-			if (
-				await askYesOrNo(
-					questionColor(
-						` ${sign} ${fromFolder.path}: total of ${items.length} ${bold(
-							extension
-						)} files (y/n) `
-					)
-				)
-			)
-				items.forEach(item =>
-					fse.copyFile(path.join(fromFolder.path, item), path.join(toFolder.path, item))
-				);
-			else ignored.push(...items);
-		} else
-			for (const item of items)
-				if (
-					await askYesOrNo(
-						questionColor(` ${sign} ${path.join(fromFolder.path, bold(item))} (y/n) `)
-					)
-				)
-					fse.copyFile(path.join(fromFolder.path, item), path.join(toFolder.path, item));
-				else ignored.push(item);
-	return ignored;
-}
-
-async function copyFolders(
-	fromFolder: Folder,
-	toFolder: Folder,
-	questionColor: (str: string) => string,
-	sign: string
-) {
-	const ignored: string[] = []; // folders that user refused to copy
-	for (const item of fromFolder.foldersOnlyHere)
-		if (
-			await askYesOrNo(
-				questionColor(` ${sign} ${path.join(fromFolder.path, bold(item))} (y/n) `)
-			)
-		)
-			fse.copySync(path.join(fromFolder.path, item), path.join(toFolder.path, item));
-		else ignored.push(item);
-	return ignored;
-}
-
-async function syncEverythingWithQuestions(
-	[dir1, dir2]: [Folder, Folder],
-	configs: [ChildDirectory | undefined, ChildDirectory | undefined]
-) {
-	// remove ignored files & folders
-	[dir1, dir2].forEach((dir, i) => {
-		if (!configs[i]) return;
-		configs[i]?.ignoreFiles?.forEach(f => dir.filesOnlyHere.delete(f));
-		configs[i]?.ignoreFolders?.forEach(f => dir.foldersOnlyHere.delete(f));
-	});
-
-	// from dir1 to dir2
-	dir1.ignoreFiles = await copyFiles(dir1, dir2, cyan, "dir2 <=");
-	dir1.ignoreFolders = await copyFolders(dir1, dir2, cyan, "dir2 <=");
-	// from dir2 to dir1
-	dir2.ignoreFiles = await copyFiles(dir2, dir1, magenta, "dir1 <=");
-	dir2.ignoreFolders = await copyFolders(dir2, dir1, magenta, "dir1 <=");
-
-	// add ignored files to dirs
-	[dir1, dir2].forEach((dir, i) => {
-		if (!configs[i]) return;
-		configs[i]?.ignoreFiles?.forEach(f => dir.ignoreFiles?.push(f));
-		configs[i]?.ignoreFolders?.forEach(f => dir.ignoreFolders?.push(f));
-	});
-
-	// recursively sync common subdirectories
-	for (const i in dir1.subDirs)
-		await syncEverythingWithQuestions(
-			[dir1.subDirs[i], dir2.subDirs[i]],
-			[
-				configs[0]?.subDirs.find(subdir => subdir.name === dir1.subDirs[i].name),
-				configs[1]?.subDirs.find(subdir => subdir.name === dir2.subDirs[i].name),
-			]
+	if (!dirs.length) errors.push("No directories specified");
+	else if (dirs.length < 2)
+		errors.push(
+			`Insufficient number of directories. Received ${dirs.length}, expected minumim 2.`
 		);
+	dirs.forEach(dir => {
+		if (!fse.existsSync(dir)) errors.push(`Directory "${dir}" does not exist.`);
+	});
+	errors.forEach(logError);
+	return errors.length;
 }
 
-function readConfigFiles(dir1: string, dir2: string) {
-	return [dir1, dir2]
+function readConfigFiles(dirs: string[]) {
+	return dirs
 		.map(dir => path.join(dir, configFileName))
 		.map(path =>
 			fse.existsSync(path)
@@ -140,46 +49,132 @@ function readConfigFiles(dir1: string, dir2: string) {
 		);
 }
 
-function finaliseFolderOutput(folder: Folder): ChildDirectory {
-	return {
-		name: folder.name,
-		ignoreFiles: folder.ignoreFiles || [],
-		ignoreFolders: folder.ignoreFolders || [],
-		subDirs: folder.subDirs.map(finaliseFolderOutput),
-	};
+async function syncFileTrees(
+	fileTrees: FileTree[],
+	ignored: Record<string, Set<string>>,
+	uuids: string[]
+) {
+	// first, sync files
+	for (const i in fileTrees) {
+		const tree = fileTrees[i];
+		const otherTrees = fileTrees.filter(t => t !== tree);
+		// approach: ask and copy each file to all other directories where it isn't
+
+		// filter only the files which aren't present in at least one directory
+		const suggestedFiles = [...tree.files].filter(
+			file => otherTrees.filter(t => !t.files.has(file)).length
+		);
+		console.log(suggestedFiles);
+
+		for (const { value: extension, items } of groupByValue(suggestedFiles, path.extname)) {
+			let copyFileNames: string[] = [];
+			if (items.length > 10) {
+				if (
+					await askYesOrNo(
+						magenta(
+							`Dir #${i + 1}: ${tree.absolutePath}: ${items.length} "${bold(
+								extension
+							)}" files (y/n) `
+						)
+					)
+				)
+					copyFileNames = items;
+				else
+					items.forEach(file =>
+						ignored[uuids[i]].add(path.join(tree.relativePath, file))
+					);
+			} else
+				for (const file of items)
+					if (
+						await askYesOrNo(
+							magenta(
+								`Dir #${i + 1}: ${path.join(tree.absolutePath, bold(file))} (y/n) `
+							)
+						)
+					)
+						copyFileNames.push(file);
+					else ignored[uuids[i]].add(path.join(tree.relativePath, file));
+
+			copyFileNames.forEach(file =>
+				otherTrees
+					.filter(t => !t.files.has(file))
+					.forEach(destination => {
+						fse.copyFile(
+							path.join(tree.absolutePath, file),
+							path.join(destination.absolutePath, file)
+						);
+						destination.files.add(file);
+					})
+			);
+		}
+	}
+
+	// then, sync directories (recursively)
+	// TODO
 }
 
-export default async function syncDirectories(dir1: string, dir2: string, options: Options) {
-	if (errorChecking(dir1, dir2, options).length) return;
+export default async function syncDirectories(options: Options, dirs: string[]) {
+	if (errorChecking(options, dirs)) return;
 	if (options.force) return logError("Force option is not yet implemented.");
 
 	logGreen("Analysing...");
-	const configFiles = readConfigFiles(dir1, dir2);
+	const configFiles = readConfigFiles(dirs);
 
-	let diffs = getDifferences(dir1, dir2);
-	if (!configFiles.filter(Boolean).length && diffs[0].name !== diffs[1].name)
-		logWarning(`Root folder names differ: "${diffs[0].name}" and "${diffs[1].name}"`);
+	/* 
+	TIME TO WRITE SOME PSEUDOCODE
+	1) merge all configFiles together to get list of all root dirs (and their uuids and ignored children)
+	2) for each root dir, read all files&directories except those ignored and store this file tree,
+	   (cleanup: if something is specified as "ignored" but not present, delete from list of ignored)
+	3) recursively go through read files&subdirs and copy them if necessary (if missing)
+	   TODO: if a file is present in both dirs, compare them by date-of-last-modification prop if possible
+	4) merge new and old config together & save config to each root dir
+	*/
 
-	// TODO // logGreen("No differences found.");
+	// 1a) if we have no config file, create an empty one
+	const uuids = configFiles.map(config => config?.thisDirUuid || randomUUID());
+	const allConfigFiles = configFiles.map(
+		(config, i) =>
+			config ?? {
+				lastSyncDate: "never",
+				dirsyncVersion: "unknown",
+				thisDirUuid: uuids[i],
+				dirs: configFiles.map((_, i2) => ({ uuid: uuids[i2], ignore: [] })),
+			}
+	);
+	// 1b) merge `ignore` lists together - create object with keys uuids and values `RootDirectory`-s
+	const ignoreLists = groupByValue(
+		allConfigFiles.flatMap(config => config.dirs),
+		dir => dir.uuid
+	).reduce(
+		(curr, { value: uuid, items }) => ({
+			...curr,
+			[uuid as UUID]: new Set(items.flatMap(config => config.ignore)),
+		}),
+		{} as Record<UUID, Set<string>>
+	);
 
-	await syncEverythingWithQuestions(diffs, [configFiles[0]?.dir1, configFiles[1]?.dir2]);
+	// 2) for each root dir, read the file tree
+	const fileTrees = dirs.map((dir, i) =>
+		getFileTreeWithoutIgnoredItems(dir, "", ignoreLists[uuids[i]])
+	);
+	console.log(fileTrees);
 
-	// output result to a file
-	const output: DirsyncConfigFile = {
-		dirsyncVersion: version,
-		lastSyncDate: new Date().toISOString(),
-		dir1: {
-			uuid: configFiles[0]?.dir1.uuid ?? randomUUID(),
-			...finaliseFolderOutput(diffs[0]),
-		},
-		dir2: {
-			uuid: configFiles[1]?.dir2.uuid ?? randomUUID(),
-			...finaliseFolderOutput(diffs[1]),
-		},
-	};
-	// write a copies to each directory
-	fse.writeFileSync(path.join(dir1, "dirsync.config.json"), JSON.stringify(output));
-	fse.writeFileSync(path.join(dir2, "dirsync.config.json"), JSON.stringify(output));
+	// 3) recursively sync directories
+	await syncFileTrees(fileTrees, ignoreLists, uuids);
+
+	// 4) write config file to each directory
+	dirs.forEach((dir, i) => {
+		const config: DirsyncConfigFile = {
+			dirsyncVersion: version,
+			lastSyncDate: new Date().toISOString(),
+			thisDirUuid: uuids[i],
+			dirs: fileTrees.map((_, treeIndex) => ({
+				uuid: uuids[treeIndex],
+				ignore: Array.from(ignoreLists[uuids[treeIndex]]),
+			})),
+		};
+		fse.writeFileSync(path.join(dir, configFileName), JSON.stringify(config));
+	});
 
 	logGreen("Done!");
 }
