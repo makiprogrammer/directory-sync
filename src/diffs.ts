@@ -12,6 +12,7 @@ export interface FileTree {
 	absolutePath: string;
 	relativePath: string;
 	files: Set<string>;
+	folders: Set<string>;
 	subDirs: FileTree[];
 }
 
@@ -40,6 +41,7 @@ export function getFileTreeWithoutIgnoredItems(
 		absolutePath: path.join(rootDir, relativePath),
 		relativePath,
 		files: new Set(filteredFileNames),
+		folders: new Set(filteredFolderNames),
 		subDirs: filteredFolderNames.map(folder =>
 			getFileTreeWithoutIgnoredItems(rootDir, path.join(relativePath, folder), ignore)
 		),

@@ -5,7 +5,7 @@ import fse from "fs-extra";
 const { version } = require("../package.json");
 
 import { configFileName, FileTree, getFileTreeWithoutIgnoredItems } from "./diffs";
-import { askYesOrNo, groupByValue, logError, logGreen, UUID } from "./utils";
+import { askYesOrNo, getIntersection, groupByValue, logError, logGreen, UUID } from "./utils";
 
 interface RootDirectory {
 	uuid: string;
@@ -35,6 +35,8 @@ function errorChecking(options: Options, dirs: string[]) {
 	dirs.forEach(dir => {
 		if (!fse.existsSync(dir)) errors.push(`Directory "${dir}" does not exist.`);
 	});
+	if (dirs.length !== new Set(dirs).size)
+		errors.push("Some directories were specified more than once.");
 	errors.forEach(logError);
 	return errors.length;
 }
@@ -60,22 +62,20 @@ async function syncFileTrees(
 		const otherTrees = fileTrees.filter(t => t !== tree);
 		// approach: ask and copy each file to all other directories where it isn't
 
-		// filter only the files which aren't present in at least one directory
+		// filter only the files which aren't present in at least one other directory
 		const suggestedFiles = [...tree.files].filter(
 			file => otherTrees.filter(t => !t.files.has(file)).length
 		);
-		console.log(suggestedFiles);
 
 		for (const { value: extension, items } of groupByValue(suggestedFiles, path.extname)) {
 			let copyFileNames: string[] = [];
 			if (items.length > 10) {
 				if (
 					await askYesOrNo(
-						magenta(
-							`Dir #${i + 1}: ${tree.absolutePath}: ${items.length} "${bold(
-								extension
-							)}" files (y/n) `
-						)
+						magenta,
+						`Dir #${Number(i) + 1}: ${tree.absolutePath}: ${items.length} "${bold(
+							extension
+						)}" files`
 					)
 				)
 					copyFileNames = items;
@@ -87,9 +87,8 @@ async function syncFileTrees(
 				for (const file of items)
 					if (
 						await askYesOrNo(
-							magenta(
-								`Dir #${i + 1}: ${path.join(tree.absolutePath, bold(file))} (y/n) `
-							)
+							magenta,
+							`Dir #${Number(i) + 1}: ${path.join(tree.absolutePath, bold(file))}`
 						)
 					)
 						copyFileNames.push(file);
@@ -109,8 +108,50 @@ async function syncFileTrees(
 		}
 	}
 
-	// then, sync directories (recursively)
-	// TODO
+	// then, sync directories (only those which are not everywhere)
+	for (const i in fileTrees) {
+		const tree = fileTrees[i];
+		const otherTrees = fileTrees.filter(t => t !== tree);
+
+		// filter only the folders which aren't present in at least one other directory
+		const suggestedFolders = [...tree.folders].filter(
+			folder => otherTrees.filter(t => !t.folders.has(folder)).length
+		);
+
+		for (const folder of suggestedFolders) {
+			if (
+				await askYesOrNo(
+					magenta,
+					`Dir #${Number(i) + 1}: ${path.join(tree.absolutePath, bold(folder))}`
+				)
+			)
+				otherTrees
+					.filter(t => !t.folders.has(folder))
+					.forEach(destination => {
+						fse.copy(
+							path.join(tree.absolutePath, folder),
+							path.join(destination.absolutePath, folder)
+						);
+						destination.folders.add(folder);
+						// there is no need to also re-compute subDirs of each destination
+					});
+			else ignored[uuids[i]].add(path.join(tree.relativePath, folder));
+		}
+	}
+
+	// sync subdirectories recursively (only folders that were there before dirsync stared)
+	// TODO: what if a folder is in 2 trees and not in 3rd? The 2 won't be synced
+	for (const commonFolderName of getIntersection(
+		...fileTrees.map(tree => new Set(tree.subDirs.map(subDir => subDir.name)))
+	)) {
+		await syncFileTrees(
+			fileTrees.map(
+				tree => tree.subDirs.find(subDir => subDir.name === commonFolderName) as FileTree
+			),
+			ignored,
+			uuids
+		);
+	}
 }
 
 export default async function syncDirectories(options: Options, dirs: string[]) {
@@ -157,7 +198,6 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 	const fileTrees = dirs.map((dir, i) =>
 		getFileTreeWithoutIgnoredItems(dir, "", ignoreLists[uuids[i]])
 	);
-	console.log(fileTrees);
 
 	// 3) recursively sync directories
 	await syncFileTrees(fileTrees, ignoreLists, uuids);

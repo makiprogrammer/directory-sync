@@ -1,5 +1,5 @@
 import readline from "node:readline";
-import chalk from "chalk";
+import chalk, { Chalk } from "chalk";
 
 export type UUID = string;
 
@@ -24,10 +24,10 @@ export function logYellow(message: string) {
 	console.log(chalk.yellow(message));
 }
 
-export async function askYesOrNo(question: string) {
+export async function askYesOrNo(color: Chalk, question: string) {
 	return new Promise(resolve => {
 		const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-		rl.question(question, answer => {
+		rl.question(color(question + " (y/n) "), answer => {
 			rl.close();
 			if (!answer) return resolve(false);
 			if (["y", "yes"].includes(answer.toLowerCase())) return resolve(true);
@@ -40,8 +40,9 @@ export async function askYesOrNo(question: string) {
 export function getDifference<T>(set1: Set<T>, set2: Set<T>) {
 	return new Set([...set1].filter(element => !set2.has(element)));
 }
-export function getIntersection<T>(set1: Set<T>, set2: Set<T>) {
-	return new Set([...set1].filter(element => set2.has(element)));
+export function getIntersection<T>(...sets: Set<T>[]) {
+	if (!sets.length) return new Set<T>();
+	return sets.reduce((curr, acc) => new Set([...curr].filter(element => acc.has(element))));
 }
 export function getUnion<T>(...sets: Set<T>[]) {
 	return new Set(sets.flatMap(set => set.values()));
