@@ -73,21 +73,31 @@ function copyFolder(source: FileTree, folder: string, destination: FileTree) {
 	// TODO I think this will get more complicated than that
 }
 
-async function syncFileTrees(
-	fileTrees: FileTree[],
-	excludeGlobs: Record<string, Set<string>>,
-	skipGlobs: Record<string, Set<string>>
-) {
+async function syncFileTrees({
+	fileTrees,
+	excludeGlobs,
+	skipGlobs,
+	destinationQuestions,
+}: {
+	fileTrees: FileTree[];
+	excludeGlobs: Record<string, Set<string>>;
+	skipGlobs: Record<string, Set<string>>;
+	destinationQuestions: boolean;
+}) {
 	// first, sync files
 	for (const i in fileTrees) {
 		const tree = fileTrees[i];
 		const otherTrees = fileTrees.filter(t => t !== tree);
-		// approach: ask and copy each file to all other directories where it isn't
+		const relativePath = (f: string) => path.join(tree.relativePath, f);
+		// approach: ask and copy each file or folder to all other directories where it isn't
 
+		// #region FILES
 		// filter only the files which aren't present in at least one other directory
 		const suggestedFiles = [...tree.files].filter(
 			file =>
-				otherTrees.some(t => !t.files.has(file) && !globMatch(file, skipGlobs[t.rootUuid]))
+				otherTrees.some(
+					t => !t.files.has(file) && !globMatch(relativePath(file), skipGlobs[t.rootUuid])
+				)
 			// select the file only if it isn't in a possible destination AND can be there (isn't skipped)
 		);
 
@@ -113,11 +123,8 @@ async function syncFileTrees(
 						)} ${bold(extension)} files in this specific directory?`
 					)
 				)
-					excludeGlobs[tree.rootUuid].add(path.join(tree.relativePath, `*${extension}`));
-				else
-					items.forEach(file =>
-						excludeGlobs[tree.rootUuid].add(path.join(tree.relativePath, file))
-					);
+					excludeGlobs[tree.rootUuid].add(relativePath(`*${extension}`));
+				else items.forEach(file => excludeGlobs[tree.rootUuid].add(relativePath(file)));
 			} else
 				for (const file of items)
 					if (
@@ -127,7 +134,7 @@ async function syncFileTrees(
 						)
 					)
 						copyFileNames.push(file);
-					else excludeGlobs[tree.rootUuid].add(path.join(tree.relativePath, file));
+					else excludeGlobs[tree.rootUuid].add(relativePath(file));
 
 			if (!copyFileNames.length) continue; // if we have nothing to copy
 
@@ -138,43 +145,45 @@ async function syncFileTrees(
 				if (copyFileNames.every(file => destination.files.has(file))) continue; // if it already has all files
 
 				if (asGroup) {
+					if (globMatch(relativePath(`*${extension}`), skipGlobs[destination.rootUuid]))
+						continue; // it can not be copied to this destination
 					if (
-						await askYesOrNo(
+						!destinationQuestions ||
+						(await askYesOrNo(
 							magenta,
-							`\tCopy all ${bold(copyFileNames.length)} ${bold(
-								extension
-							)} files to dir ${bold("#")}${bold(Number(j) + 1)}`
-						)
+							`\tTo dir ${bold("#")}${bold(Number(j) + 1)}: all ${bold(
+								copyFileNames.length
+							)} ${bold(extension)} files`
+						))
 					)
 						copyFileNames.forEach(file => copyFile(tree, file, destination));
-					else
-						skipGlobs[destination.rootUuid].add(
-							path.join(tree.relativePath, `*${extension}`)
-						);
-				} else
-					for (const file of copyFileNames)
+					else skipGlobs[destination.rootUuid].add(relativePath(`*${extension}`));
+				} else {
+					// copy only the files that can be in this specific destination
+					for (const file of copyFileNames.filter(
+						file => !globMatch(relativePath(file), skipGlobs[destination.rootUuid])
+					))
 						if (
-							await askYesOrNo(
+							!destinationQuestions ||
+							(await askYesOrNo(
 								magenta,
 								`\tTo dir ${bold(`#${Number(j) + 1}`)}: ${bold(file)}`
-							)
+							))
 						)
 							copyFile(tree, file, destination);
-						else
-							skipGlobs[destination.rootUuid].add(path.join(tree.relativePath, file));
+						else skipGlobs[destination.rootUuid].add(relativePath(file));
+				}
 			}
 		}
-	}
+		// #endregion
 
-	// then, sync directories (only those which are not everywhere)
-	for (const i in fileTrees) {
-		const tree = fileTrees[i];
-		const otherTrees = fileTrees.filter(t => t !== tree);
-
+		// # region FOLDERS (which are not everywhere they possibly can be)
 		// filter only the folders which aren't present in at least one other directory
 		const suggestedFolders = [...tree.folders].filter(folder =>
 			otherTrees.some(
-				t => !t.folders.has(folder) && !globMatch(folder, skipGlobs[t.rootUuid])
+				t =>
+					!t.folders.has(folder) &&
+					!globMatch(relativePath(folder), skipGlobs[t.rootUuid])
 			)
 		);
 
@@ -185,7 +194,7 @@ async function syncFileTrees(
 					`Dir #${Number(i) + 1}: ${path.join(tree.absolutePath, bold(folder))}`
 				))
 			) {
-				excludeGlobs[tree.rootUuid].add(path.join(tree.relativePath, folder));
+				excludeGlobs[tree.rootUuid].add(relativePath(folder));
 				continue;
 			}
 
@@ -193,16 +202,18 @@ async function syncFileTrees(
 				const destination = fileTrees[j];
 				if (tree === destination) continue; // it's the source tree
 				if (destination.folders.has(folder)) continue; // if it already has the folder
+				if (globMatch(relativePath(folder), skipGlobs[tree.rootUuid])) continue; // the folder can not be copied to this destination
 
 				if (
-					await askYesOrNo(
+					!destinationQuestions ||
+					(await askYesOrNo(
 						magenta,
 						`\tTo dir ${bold(`#${Number(j) + 1}`)}: ${bold(folder)}`
-					)
+					))
 				)
 					// there is no need to also re-compute subDirs of each destination
 					copyFolder(tree, folder, destination);
-				else skipGlobs[destination.rootUuid].add(path.join(tree.relativePath, folder));
+				else skipGlobs[destination.rootUuid].add(relativePath(folder));
 			}
 		}
 	}
@@ -212,13 +223,14 @@ async function syncFileTrees(
 	for (const commonFolderName of getIntersection(
 		...fileTrees.map(tree => new Set(tree.subDirs.map(subDir => subDir.name)))
 	)) {
-		await syncFileTrees(
-			fileTrees.map(
+		await syncFileTrees({
+			fileTrees: fileTrees.map(
 				tree => tree.subDirs.find(subDir => subDir.name === commonFolderName) as FileTree
 			),
 			excludeGlobs,
-			skipGlobs
-		);
+			skipGlobs,
+			destinationQuestions,
+		});
 	}
 }
 
@@ -288,7 +300,12 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 
 	// 3) recursively sync directories
 	logGreen("Syncing...");
-	await syncFileTrees(fileTrees, excludeGlobs, skipGlobs);
+	await syncFileTrees({
+		fileTrees,
+		excludeGlobs,
+		skipGlobs,
+		destinationQuestions: dirs.length > 2,
+	});
 
 	// 4) write config file to each directory
 	dirs.forEach((dir, i) => {
