@@ -1,6 +1,6 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { bold, magenta } from "chalk";
+import { bold, magenta, red } from "chalk";
 import fse from "fs-extra";
 const { version } = require("../package.json");
 
@@ -79,6 +79,15 @@ async function syncFileTrees(
 					)
 				)
 					copyFileNames = items;
+				else if (
+					await askYesOrNo(
+						red,
+						`Dir #${Number(i) + 1}: ${tree.absolutePath}: Want to ignore ${bold(
+							"ALL current & future"
+						)} ${bold(extension)} files in this specific directory?`
+					)
+				)
+					ignored[uuids[i]].add(path.join(tree.relativePath, `*${extension}`));
 				else
 					items.forEach(file =>
 						ignored[uuids[i]].add(path.join(tree.relativePath, file))

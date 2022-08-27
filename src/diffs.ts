@@ -1,5 +1,6 @@
 import path from "node:path";
 import fse from "fs-extra";
+import { globMatch } from "./utils";
 
 export const configFileName = "dirsync.config.json";
 
@@ -30,9 +31,10 @@ export function getFileTreeWithoutIgnoredItems(
 	const fileNames = allChildren.filter(d => !d.isDirectory()).map(f => f.name);
 	const folderNames = allChildren.filter(d => d.isDirectory()).map(f => f.name);
 
-	// TODO: add `npm i micromatch` package for complete ignore patterns
-	const filteredFileNames = fileNames.filter(f => !ignore.has(path.join(relativePath, f)));
-	const filteredFolderNames = folderNames.filter(f => !ignore.has(path.join(relativePath, f)));
+	// using glob matching for advanced filtering options
+	const filteringFunction = (f: string) => !globMatch(path.join(relativePath, f), [...ignore]);
+	const filteredFileNames = fileNames.filter(filteringFunction);
+	const filteredFolderNames = folderNames.filter(filteringFunction);
 
 	// TODO: remove from `ignore` items that don't exist
 

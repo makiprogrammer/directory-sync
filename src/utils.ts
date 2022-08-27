@@ -1,5 +1,6 @@
 import readline from "node:readline";
 import chalk, { Chalk } from "chalk";
+import minimatch from "minimatch";
 
 export type UUID = string;
 
@@ -69,4 +70,9 @@ export function groupByValue<T>(
 		final[propToIndex[prop]].items.push(item);
 	});
 	return final;
+}
+
+export function globMatch(str: string, patterns: string[]) {
+	// minimatch package doesn't work with windows backslashes
+	return patterns.some(pattern => minimatch(str, pattern.replace(/\\/g, "/")));
 }
