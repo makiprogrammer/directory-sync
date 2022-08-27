@@ -72,7 +72,7 @@ export function groupByValue<T>(
 	return final;
 }
 
-export function globMatch(str: string, patterns: string[]) {
+export function globMatch(str: string, patterns: Set<string>) {
 	// minimatch package doesn't work with windows backslashes
-	return patterns.some(pattern => minimatch(str, pattern.replace(/\\/g, "/")));
+	return [...patterns].some(pattern => minimatch(str, pattern.replace(/\\/g, "/")));
 }

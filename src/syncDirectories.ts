@@ -5,11 +5,23 @@ import fse from "fs-extra";
 const { version } = require("../package.json");
 
 import { configFileName, FileTree, getFileTreeWithoutIgnoredItems } from "./diffs";
-import { askYesOrNo, getIntersection, groupByValue, logError, logGreen, UUID } from "./utils";
+import {
+	askYesOrNo,
+	getIntersection,
+	globMatch,
+	groupByValue,
+	logError,
+	logGreen,
+	UUID,
+} from "./utils";
 
 interface RootDirectory {
+	/** the UUID of a directory - functions as an id */
 	uuid: string;
-	ignore: string[];
+	/** glob files and folders which belong to this directory only and can not be copied anywhere else. */
+	excludeFromSync: string[];
+	/** glob files and folders which can not be copied to this directory. */
+	skipSyncing: string[];
 	// TODO: maybe add presets for local drives, external backup drives, etc.
 	// TODO: ... and from that derive default behaviour
 }
@@ -51,10 +63,20 @@ function readConfigFiles(dirs: string[]) {
 		);
 }
 
+function copyFile(source: FileTree, file: string, destination: FileTree) {
+	fse.copyFile(path.join(source.absolutePath, file), path.join(destination.absolutePath, file));
+	destination.files.add(file);
+}
+function copyFolder(source: FileTree, folder: string, destination: FileTree) {
+	fse.copy(path.join(source.absolutePath, folder), path.join(destination.absolutePath, folder));
+	destination.folders.add(folder);
+	// TODO I think this will get more complicated than that
+}
+
 async function syncFileTrees(
 	fileTrees: FileTree[],
-	ignored: Record<string, Set<string>>,
-	uuids: string[]
+	excludeGlobs: Record<string, Set<string>>,
+	skipGlobs: Record<string, Set<string>>
 ) {
 	// first, sync files
 	for (const i in fileTrees) {
@@ -64,11 +86,14 @@ async function syncFileTrees(
 
 		// filter only the files which aren't present in at least one other directory
 		const suggestedFiles = [...tree.files].filter(
-			file => otherTrees.filter(t => !t.files.has(file)).length
+			file =>
+				otherTrees.some(t => !t.files.has(file) && !globMatch(file, skipGlobs[t.rootUuid]))
+			// select the file only if it isn't in a possible destination AND can be there (isn't skipped)
 		);
 
 		for (const { value: extension, items } of groupByValue(suggestedFiles, path.extname)) {
 			let copyFileNames: string[] = [];
+			let asGroup = false; // consider files as indivisible group
 			if (items.length > 10) {
 				if (
 					await askYesOrNo(
@@ -77,9 +102,10 @@ async function syncFileTrees(
 							extension
 						)}" files`
 					)
-				)
+				) {
 					copyFileNames = items;
-				else if (
+					asGroup = true;
+				} else if (
 					await askYesOrNo(
 						red,
 						`Dir #${Number(i) + 1}: ${tree.absolutePath}: Want to ignore ${bold(
@@ -87,10 +113,10 @@ async function syncFileTrees(
 						)} ${bold(extension)} files in this specific directory?`
 					)
 				)
-					ignored[uuids[i]].add(path.join(tree.relativePath, `*${extension}`));
+					excludeGlobs[tree.rootUuid].add(path.join(tree.relativePath, `*${extension}`));
 				else
 					items.forEach(file =>
-						ignored[uuids[i]].add(path.join(tree.relativePath, file))
+						excludeGlobs[tree.rootUuid].add(path.join(tree.relativePath, file))
 					);
 			} else
 				for (const file of items)
@@ -101,19 +127,42 @@ async function syncFileTrees(
 						)
 					)
 						copyFileNames.push(file);
-					else ignored[uuids[i]].add(path.join(tree.relativePath, file));
+					else excludeGlobs[tree.rootUuid].add(path.join(tree.relativePath, file));
 
-			copyFileNames.forEach(file =>
-				otherTrees
-					.filter(t => !t.files.has(file))
-					.forEach(destination => {
-						fse.copyFile(
-							path.join(tree.absolutePath, file),
-							path.join(destination.absolutePath, file)
+			if (!copyFileNames.length) continue; // if we have nothing to copy
+
+			// actual copying files
+			for (const j in fileTrees) {
+				const destination = fileTrees[j];
+				if (tree === destination) continue; // if it's the source tree
+				if (copyFileNames.every(file => destination.files.has(file))) continue; // if it already has all files
+
+				if (asGroup) {
+					if (
+						await askYesOrNo(
+							magenta,
+							`\tCopy all ${bold(copyFileNames.length)} ${bold(
+								extension
+							)} files to dir ${bold("#")}${bold(Number(j) + 1)}`
+						)
+					)
+						copyFileNames.forEach(file => copyFile(tree, file, destination));
+					else
+						skipGlobs[destination.rootUuid].add(
+							path.join(tree.relativePath, `*${extension}`)
 						);
-						destination.files.add(file);
-					})
-			);
+				} else
+					for (const file of copyFileNames)
+						if (
+							await askYesOrNo(
+								magenta,
+								`\tTo dir ${bold(`#${Number(j) + 1}`)}: ${bold(file)}`
+							)
+						)
+							copyFile(tree, file, destination);
+						else
+							skipGlobs[destination.rootUuid].add(path.join(tree.relativePath, file));
+			}
 		}
 	}
 
@@ -123,28 +172,38 @@ async function syncFileTrees(
 		const otherTrees = fileTrees.filter(t => t !== tree);
 
 		// filter only the folders which aren't present in at least one other directory
-		const suggestedFolders = [...tree.folders].filter(
-			folder => otherTrees.filter(t => !t.folders.has(folder)).length
+		const suggestedFolders = [...tree.folders].filter(folder =>
+			otherTrees.some(
+				t => !t.folders.has(folder) && !globMatch(folder, skipGlobs[t.rootUuid])
+			)
 		);
 
 		for (const folder of suggestedFolders) {
 			if (
-				await askYesOrNo(
+				!(await askYesOrNo(
 					magenta,
 					`Dir #${Number(i) + 1}: ${path.join(tree.absolutePath, bold(folder))}`
+				))
+			) {
+				excludeGlobs[tree.rootUuid].add(path.join(tree.relativePath, folder));
+				continue;
+			}
+
+			for (const j in fileTrees) {
+				const destination = fileTrees[j];
+				if (tree === destination) continue; // it's the source tree
+				if (destination.folders.has(folder)) continue; // if it already has the folder
+
+				if (
+					await askYesOrNo(
+						magenta,
+						`\tTo dir ${bold(`#${Number(j) + 1}`)}: ${bold(folder)}`
+					)
 				)
-			)
-				otherTrees
-					.filter(t => !t.folders.has(folder))
-					.forEach(destination => {
-						fse.copy(
-							path.join(tree.absolutePath, folder),
-							path.join(destination.absolutePath, folder)
-						);
-						destination.folders.add(folder);
-						// there is no need to also re-compute subDirs of each destination
-					});
-			else ignored[uuids[i]].add(path.join(tree.relativePath, folder));
+					// there is no need to also re-compute subDirs of each destination
+					copyFolder(tree, folder, destination);
+				else skipGlobs[destination.rootUuid].add(path.join(tree.relativePath, folder));
+			}
 		}
 	}
 
@@ -157,8 +216,8 @@ async function syncFileTrees(
 			fileTrees.map(
 				tree => tree.subDirs.find(subDir => subDir.name === commonFolderName) as FileTree
 			),
-			ignored,
-			uuids
+			excludeGlobs,
+			skipGlobs
 		);
 	}
 }
@@ -188,28 +247,48 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 				lastSyncDate: "never",
 				dirsyncVersion: "unknown",
 				thisDirUuid: uuids[i],
-				dirs: configFiles.map((_, i2) => ({ uuid: uuids[i2], ignore: [] })),
+				dirs: configFiles.map((_, i2) => ({
+					uuid: uuids[i2],
+					excludeFromSync: [],
+					skipSyncing: [],
+				})),
 			}
 	);
-	// 1b) merge `ignore` lists together - create object with keys uuids and values `RootDirectory`-s
-	const ignoreLists = groupByValue(
+	// 1b) merge `excludeFromSync` and `skipGlobs` lists together - create object with keys uuids and values `RootDirectory`-s
+	const excludeGlobs = groupByValue(
 		allConfigFiles.flatMap(config => config.dirs),
 		dir => dir.uuid
 	).reduce(
 		(curr, { value: uuid, items }) => ({
 			...curr,
-			[uuid as UUID]: new Set(items.flatMap(config => config.ignore)),
+			[uuid as UUID]: new Set(items.flatMap(config => config.excludeFromSync)),
+		}),
+		{} as Record<UUID, Set<string>>
+	);
+	const skipGlobs = groupByValue(
+		allConfigFiles.flatMap(config => config.dirs),
+		dir => dir.uuid
+	).reduce(
+		(curr, { value: uuid, items }) => ({
+			...curr,
+			[uuid as UUID]: new Set(items.flatMap(config => config.skipSyncing)),
 		}),
 		{} as Record<UUID, Set<string>>
 	);
 
 	// 2) for each root dir, read the file tree
 	const fileTrees = dirs.map((dir, i) =>
-		getFileTreeWithoutIgnoredItems(dir, "", ignoreLists[uuids[i]])
+		getFileTreeWithoutIgnoredItems({
+			rootDir: dir,
+			relativePath: "",
+			rootUuid: uuids[i],
+			excludeGlobs: excludeGlobs[uuids[i]],
+		})
 	);
 
 	// 3) recursively sync directories
-	await syncFileTrees(fileTrees, ignoreLists, uuids);
+	logGreen("Syncing...");
+	await syncFileTrees(fileTrees, excludeGlobs, skipGlobs);
 
 	// 4) write config file to each directory
 	dirs.forEach((dir, i) => {
@@ -219,7 +298,8 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 			thisDirUuid: uuids[i],
 			dirs: fileTrees.map((_, treeIndex) => ({
 				uuid: uuids[treeIndex],
-				ignore: Array.from(ignoreLists[uuids[treeIndex]]),
+				excludeFromSync: Array.from(excludeGlobs[uuids[treeIndex]]),
+				skipSyncing: Array.from(skipGlobs[uuids[treeIndex]]),
 			})),
 		};
 		fse.writeFileSync(path.join(dir, configFileName), JSON.stringify(config));
