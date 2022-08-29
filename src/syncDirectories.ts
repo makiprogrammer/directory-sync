@@ -42,7 +42,7 @@ function errorChecking(options: Options, dirs: string[]) {
 	if (!dirs.length) errors.push("No directories specified");
 	else if (dirs.length < 2)
 		errors.push(
-			`Insufficient number of directories. Received ${dirs.length}, expected minumim 2.`
+			`Insufficient number of directories. Received ${dirs.length}, expected minimum 2.`
 		);
 	dirs.forEach(dir => {
 		if (!fse.existsSync(dir)) errors.push(`Directory "${dir}" does not exist.`);
@@ -68,9 +68,21 @@ function copyFile(source: FileTree, file: string, destination: FileTree) {
 	destination.files.add(file);
 }
 function copyFolder(source: FileTree, folder: string, destination: FileTree) {
-	fse.copy(path.join(source.absolutePath, folder), path.join(destination.absolutePath, folder));
+	// instead of old-school whole-dir copying, we will carefully check each file & folder
+	// // fse.copy(path.join(source.absolutePath, folder), path.join(destination.absolutePath, folder));
+	fse.mkdirSync(path.join(destination.absolutePath, folder)); // sync because all other copying rely on this
+	// we do not recursively copy whole dir - it will be taken care of by syncing function
+
 	destination.folders.add(folder);
-	// TODO I think this will get more complicated than that
+	destination.subDirs.push({
+		name: folder,
+		rootUuid: destination.rootUuid,
+		absolutePath: path.join(destination.absolutePath, folder),
+		relativePath: path.join(destination.relativePath, folder),
+		files: new Set<string>(),
+		folders: new Set<string>(),
+		subDirs: [],
+	});
 }
 
 async function syncFileTrees({

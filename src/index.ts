@@ -10,6 +10,7 @@ program
 	.name("dirsync")
 	.description("Synchronises two or more directories.")
 	.option("-f, --force", "asks no questions and syncs everything (not recommended)")
+	// .option("-x, -i, --ignore-rules", "discards custom rules about not-copying ignored files/folders (preset rules still apply)")
 	.action((options, command) => {
 		syncDirectories(options, command.args);
 	});
