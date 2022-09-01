@@ -5,7 +5,7 @@ import { globMatch } from "./utils";
 export const configFileName = "dirsync.config.json";
 
 const systemFiles = new Set(["desktop.ini"]);
-const systemFolders = new Set(["System Volume Information"]);
+const systemFolders = new Set(["System Volume Information", ".", ".."]);
 const systemNames = new Set([...systemFiles, ...systemFolders, configFileName]);
 
 export type UUID = string;
@@ -26,11 +26,13 @@ export function getFileTreeWithoutIgnoredItems({
 	relativePath,
 	rootUuid,
 	excludeGlobs,
+	usedExcludeGlobs,
 }: {
 	rootDir: string;
 	relativePath: string;
 	rootUuid: string;
 	excludeGlobs: Set<string>;
+	usedExcludeGlobs: Set<string>;
 }): FileTree {
 	// readdirsync return list of so-called "dirents"
 	const allChildren = fse
@@ -40,13 +42,17 @@ export function getFileTreeWithoutIgnoredItems({
 	// only basenames (short names)
 	const fileNames = allChildren.filter(d => !d.isDirectory()).map(f => f.name);
 	const folderNames = allChildren.filter(d => d.isDirectory()).map(f => f.name);
+	const allNames = allChildren.map(f => f.name);
 
 	// using glob matching for advanced filtering options
 	const filteringFunction = (f: string) => !globMatch(path.join(relativePath, f), excludeGlobs);
 	const filteredFileNames = fileNames.filter(filteringFunction);
 	const filteredFolderNames = folderNames.filter(filteringFunction);
 
-	// TODO: remove from `excludeGlobs` items that don't exist
+	// log globs which are of some value - unused will be soon deleted (some sort of a clean-up)
+	Array.from(excludeGlobs)
+		.filter(glob => allNames.some(f => globMatch(path.join(relativePath, f), new Set([glob]))))
+		.forEach(glob => usedExcludeGlobs.add(glob));
 
 	return {
 		name: path.basename(relativePath),
@@ -61,6 +67,7 @@ export function getFileTreeWithoutIgnoredItems({
 				relativePath: path.join(relativePath, folder),
 				rootUuid,
 				excludeGlobs,
+				usedExcludeGlobs,
 			})
 		),
 	};

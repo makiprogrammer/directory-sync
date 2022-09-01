@@ -320,14 +320,20 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 	);
 
 	// 2) for each root dir, read the file tree
-	const fileTrees = dirs.map((dir, i) =>
-		getFileTreeWithoutIgnoredItems({
+	const fileTrees = dirs.map((dir, i) => {
+		// because we want to shorten the config as much as possible,
+		// we perform `excludeGlobs` clean-up (write only necessary ones)
+		const usedExcludeGlobs = new Set<string>();
+		const tree = getFileTreeWithoutIgnoredItems({
 			rootDir: dir,
 			relativePath: "",
 			rootUuid: uuids[i],
 			excludeGlobs: excludeGlobs[uuids[i]],
-		})
-	);
+			usedExcludeGlobs,
+		});
+		excludeGlobs[uuids[i]] = usedExcludeGlobs;
+		return tree;
+	});
 
 	// 3) recursively sync directories
 	logColor(green, "Syncing...");
