@@ -1,19 +1,11 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { bold, magenta, red } from "chalk";
+import { bold, green, magenta, red } from "chalk";
 import fse from "fs-extra";
 const { version } = require("../package.json");
 
-import { configFileName, FileTree, getFileTreeWithoutIgnoredItems } from "./diffs";
-import {
-	askYesOrNo,
-	getIntersection,
-	globMatch,
-	groupByValue,
-	logError,
-	logGreen,
-	UUID,
-} from "./utils";
+import { configFileName, FileTree, getFileTreeWithoutIgnoredItems, UUID } from "./diffs";
+import { askYesOrNo, globMatch, groupByValue, logColor, logError } from "./utils";
 
 interface RootDirectory {
 	/** the UUID of a directory - functions as an id */
@@ -263,17 +255,17 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 	if (errorChecking(options, dirs)) return;
 	if (options.force) return logError("Force option is not yet implemented.");
 
-	logGreen("Analysing...");
+	logColor(green, "Analysing...");
 	const configFiles = readConfigFiles(dirs);
 
 	/* 
 	TIME TO WRITE SOME PSEUDOCODE
 	1) merge all configFiles together to get list of all root dirs (and their uuids and ignored children)
-	2) for each root dir, read all files&directories except those ignored and store this file tree,
-	   (cleanup: if something is specified as "ignored" but not present, delete from list of ignored)
+	2) for each root dir, read all files & directories except excluded and store this file tree,
+	   (cleanup: if something is specified as "excluded" but not present, delete from list)
 	3) recursively go through read files&subdirs and copy them if necessary (if missing)
 	   TODO: if a file is present in both dirs, compare them by date-of-last-modification prop if possible
-	4) merge new and old config together & save config to each root dir
+	4) save new config to each root dir
 	*/
 
 	// 1a) if we have no config file, create an empty one
@@ -324,7 +316,7 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 	);
 
 	// 3) recursively sync directories
-	logGreen("Syncing...");
+	logColor(green, "Syncing...");
 	await syncFileTrees({
 		fileTrees,
 		excludeGlobs,
@@ -333,19 +325,20 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 	});
 
 	// 4) write config file to each directory
+	logColor(green, "Saving configs...");
 	dirs.forEach((dir, i) => {
 		const config: DirsyncConfigFile = {
 			dirsyncVersion: version,
 			lastSyncDate: new Date().toISOString(),
 			thisDirUuid: uuids[i],
-			dirs: fileTrees.map((_, treeIndex) => ({
-				uuid: uuids[treeIndex],
-				excludeFromSync: Array.from(excludeGlobs[uuids[treeIndex]]),
-				skipSyncing: Array.from(skipGlobs[uuids[treeIndex]]),
+			dirs: fileTrees.map(tree => ({
+				uuid: tree.rootUuid,
+				excludeFromSync: Array.from(excludeGlobs[tree.rootUuid]),
+				skipSyncing: Array.from(skipGlobs[tree.rootUuid]),
 			})),
 		};
 		fse.writeFileSync(path.join(dir, configFileName), JSON.stringify(config));
 	});
 
-	logGreen("Done!");
+	logColor(green, "Done!");
 }

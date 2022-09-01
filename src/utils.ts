@@ -2,8 +2,6 @@ import readline from "node:readline";
 import chalk, { Chalk } from "chalk";
 import minimatch from "minimatch";
 
-export type UUID = string;
-
 // console-logging utils
 export function logError(message: string) {
 	console.log(chalk.red("Error:", message));
@@ -11,20 +9,13 @@ export function logError(message: string) {
 export function logWarning(message: string) {
 	console.log(chalk.yellow("Warning:", message));
 }
-export function logColor(message: string) {
-	console.log(chalk.bgMagenta(message));
+export function logColor(color: Chalk, message: string) {
+	console.log(color(message));
 }
-// TODO: make logColor a function that takes a color and a message
-export function logGreen(message: string) {
-	console.log(chalk.green(message));
-}
-export function logRed(message: string) {
-	console.log(chalk.red(message));
-}
-export function logYellow(message: string) {
-	console.log(chalk.yellow(message));
-}
+export const log = console.log;
 
+// prompting utils
+/** Returns a Promise. Asks an user a yes-or-no question and resolves the Promise accordingly. */
 export async function askYesOrNo(color: Chalk, question: string) {
 	return new Promise(resolve => {
 		const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -38,13 +29,16 @@ export async function askYesOrNo(color: Chalk, question: string) {
 }
 
 // set operations
+/** Returns a set difference of the two sets. Keeps them unchanged. */
 export function getDifference<T>(set1: Set<T>, set2: Set<T>) {
 	return new Set([...set1].filter(element => !set2.has(element)));
 }
+/** Returns an intersection of any non-zero number of sets. Keeps them unchanged.  */
 export function getIntersection<T>(...sets: Set<T>[]) {
 	if (!sets.length) return new Set<T>();
 	return sets.reduce((curr, acc) => new Set([...curr].filter(element => acc.has(element))));
 }
+/** Returns an union of any non-zero number of sets. Keeps them unchanged. */
 export function getUnion<T>(...sets: Set<T>[]) {
 	return new Set(sets.flatMap(set => set.values()));
 }
@@ -72,7 +66,8 @@ export function groupByValue<T>(
 	return final;
 }
 
+/** Returns `true` if the given string glob-matches any of specified patterns. */
 export function globMatch(str: string, patterns: Set<string>) {
-	// minimatch package doesn't work with windows backslashes
+	// minimatch package doesn't work with windows backslashes - we must replace them
 	return [...patterns].some(pattern => minimatch(str, pattern.replace(/\\/g, "/")));
 }

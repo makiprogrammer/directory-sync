@@ -8,6 +8,8 @@ const systemFiles = new Set(["desktop.ini"]);
 const systemFolders = new Set(["System Volume Information"]);
 const systemNames = new Set([...systemFiles, ...systemFolders, configFileName]);
 
+export type UUID = string;
+
 export interface FileTree {
 	name: string;
 	rootUuid: string;
