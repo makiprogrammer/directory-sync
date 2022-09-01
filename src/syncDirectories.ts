@@ -89,14 +89,16 @@ async function syncFileTrees({
 	fileTrees,
 	excludeGlobs,
 	skipGlobs,
-	destinationQuestions,
+	twoDirsMode,
 }: {
 	fileTrees: FileTree[];
 	excludeGlobs: Record<string, Set<string>>;
 	skipGlobs: Record<string, Set<string>>;
-	destinationQuestions: boolean;
+	twoDirsMode: boolean;
 }) {
-	// first, sync files
+	// if we sync only 2 dirs, `excludeGlobs` shouldn't be modified - globs are added only to `skipGlobs`
+	// this improves UX and is more intuitive
+
 	for (const i in fileTrees) {
 		const tree = fileTrees[i];
 		const otherTrees = fileTrees.filter(t => t !== tree);
@@ -128,16 +130,23 @@ async function syncFileTrees({
 				) {
 					copyFileNames = items;
 					asGroup = true;
+				} else if (twoDirsMode) {
+					// just add the files to skipped set of the other tree
+					skipGlobs[otherTrees[0].rootUuid].add(relativePath(`*${extension}`));
 				} else if (
 					await askYesOrNo(
 						red,
-						`From dir #${from}: ${tree.absolutePath}: Want to ignore ${bold(
+						`From dir #${from}: ${tree.absolutePath}: Prevent ${bold(
 							"ALL current & future"
-						)} ${bold(extension)} files in this specific directory?`
+						)} ${bold(extension)} files in this specific directory from syncing?`
 					)
-				)
+				) {
+					// prevent all current and future files from syncing (this extension and subdirectory only)
 					excludeGlobs[tree.rootUuid].add(relativePath(`*${extension}`));
-				else items.forEach(file => excludeGlobs[tree.rootUuid].add(relativePath(file)));
+				} else {
+					// prevent only these files from syncing
+					items.forEach(file => excludeGlobs[tree.rootUuid].add(relativePath(file)));
+				}
 			} else
 				for (const file of items)
 					if (
@@ -147,6 +156,7 @@ async function syncFileTrees({
 						)
 					)
 						copyFileNames.push(file);
+					else if (twoDirsMode) skipGlobs[otherTrees[0].rootUuid].add(relativePath(file));
 					else excludeGlobs[tree.rootUuid].add(relativePath(file));
 
 			if (!copyFileNames.length) continue; // if we have nothing to copy
@@ -162,7 +172,7 @@ async function syncFileTrees({
 					if (globMatch(relativePath(`*${extension}`), skipGlobs[destination.rootUuid]))
 						continue; // it can not be copied to this destination
 					if (
-						!destinationQuestions ||
+						twoDirsMode ||
 						(await askYesOrNo(
 							magenta,
 							`\tTo dir ${bold(`#${to}`)}: all ${bold(
@@ -178,7 +188,7 @@ async function syncFileTrees({
 						file => !globMatch(relativePath(file), skipGlobs[destination.rootUuid])
 					))
 						if (
-							!destinationQuestions ||
+							twoDirsMode ||
 							(await askYesOrNo(magenta, `\tTo dir ${bold(`#${to}`)}: ${bold(file)}`))
 						)
 							copyFile(tree, file, destination);
@@ -205,7 +215,8 @@ async function syncFileTrees({
 					`From dir #${from}: ${path.join(tree.absolutePath, bold(folder))}`
 				))
 			) {
-				excludeGlobs[tree.rootUuid].add(relativePath(folder));
+				if (twoDirsMode) skipGlobs[otherTrees[0].rootUuid].add(relativePath(folder));
+				else excludeGlobs[tree.rootUuid].add(relativePath(folder));
 				continue;
 			}
 
@@ -217,10 +228,9 @@ async function syncFileTrees({
 				const to = Number(j) + 1;
 
 				if (
-					!destinationQuestions ||
+					twoDirsMode ||
 					(await askYesOrNo(magenta, `\tTo dir ${bold(`#${to}`)}: ${bold(folder)}`))
 				)
-					// there is no need to also re-compute subDirs of each destination
 					copyFolder(tree, folder, destination);
 				else skipGlobs[destination.rootUuid].add(relativePath(folder));
 			}
@@ -314,7 +324,7 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 		fileTrees,
 		excludeGlobs,
 		skipGlobs,
-		destinationQuestions: dirs.length > 2,
+		twoDirsMode: dirs.length === 2,
 	});
 
 	// 4) write config file to each directory
