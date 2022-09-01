@@ -101,6 +101,7 @@ async function syncFileTrees({
 
 	for (const i in fileTrees) {
 		const tree = fileTrees[i];
+		if (tree.isSyncedWithEverything) continue;
 		const otherTrees = fileTrees.filter(t => t !== tree);
 		const from = Number(i) + 1;
 		const relativePath = (f: string) => path.join(tree.relativePath, f);
@@ -236,21 +237,25 @@ async function syncFileTrees({
 			}
 		}
 		// #endregion
-	}
 
-	// sync subdirectories recursively (only folders that were there before dirsync stared)
-	// TODO: what if a folder is in 2 trees and not in 3rd? The 2 won't be synced
-	for (const commonFolderName of getIntersection(
-		...fileTrees.map(tree => new Set(tree.subDirs.map(subDir => subDir.name)))
-	)) {
-		await syncFileTrees({
-			fileTrees: fileTrees.map(
-				tree => tree.subDirs.find(subDir => subDir.name === commonFolderName) as FileTree
-			),
-			excludeGlobs,
-			skipGlobs,
-			destinationQuestions,
-		});
+		// #region FOLDERS (continued - which are at least in 2 dirs)
+		// filter only the folders which are in at least 1 other dir
+		for (const folder of tree.folders.values()) {
+			const syncableTrees = otherTrees.filter(t => t.folders.has(folder));
+			if (!syncableTrees.length) continue;
+			const findChild = (t: FileTree) =>
+				t.subDirs.find(subDir => subDir.name === folder) as FileTree;
+
+			await syncFileTrees({
+				fileTrees: [findChild(tree), ...syncableTrees.map(findChild)],
+				excludeGlobs,
+				skipGlobs,
+				twoDirsMode,
+			});
+		}
+		// #endregion
+
+		tree.isSyncedWithEverything = true;
 	}
 }
 

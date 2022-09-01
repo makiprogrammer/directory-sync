@@ -16,6 +16,7 @@ export interface FileTree {
 	files: Set<string>;
 	folders: Set<string>;
 	subDirs: FileTree[];
+	isSyncedWithEverything?: boolean;
 }
 
 export function getFileTreeWithoutIgnoredItems({
