@@ -5,7 +5,7 @@ import fse from "fs-extra";
 const { version } = require("../package.json");
 
 import { configFileName, FileTree, getFileTreeWithoutIgnoredItems, UUID } from "./diffs";
-import { askYesOrNo, globMatch, groupByValue, logColor, logError } from "./utils";
+import { askYesOrNo, globMatch, groupByValue, logColor, logError, logWarning } from "./utils";
 
 interface RootDirectory {
 	/** the UUID of a directory - functions as an id */
@@ -56,14 +56,24 @@ function readConfigFiles(dirs: string[]) {
 		);
 }
 
-function copyFile(source: FileTree, file: string, destination: FileTree) {
-	fse.copyFile(path.join(source.absolutePath, file), path.join(destination.absolutePath, file));
+function copyFile(source: FileTree, file: string, destination: FileTree, errors: unknown[]) {
+	try {
+		fse.copyFile(
+			path.join(source.absolutePath, file),
+			path.join(destination.absolutePath, file)
+		);
+	} catch (e) {
+		errors.push(e);
+	}
 	destination.files.add(file);
 }
-function copyFolder(source: FileTree, folder: string, destination: FileTree) {
+function copyFolder(source: FileTree, folder: string, destination: FileTree, errors: unknown[]) {
 	// instead of old-school whole-dir copying, we will carefully check each file & folder
-	// // fse.copy(path.join(source.absolutePath, folder), path.join(destination.absolutePath, folder));
-	fse.mkdirSync(path.join(destination.absolutePath, folder)); // sync because all other copying rely on this
+	try {
+		fse.mkdirSync(path.join(destination.absolutePath, folder)); // sync because all other copying rely on this
+	} catch (e) {
+		errors.push(e);
+	}
 	// we do not recursively copy whole dir - it will be taken care of by syncing function
 
 	destination.folders.add(folder);
@@ -83,11 +93,13 @@ async function syncFileTrees({
 	excludeGlobs,
 	skipGlobs,
 	twoDirsMode,
+	errors,
 }: {
 	fileTrees: FileTree[];
 	excludeGlobs: Record<string, Set<string>>;
 	skipGlobs: Record<string, Set<string>>;
 	twoDirsMode: boolean;
+	errors: unknown[];
 }) {
 	// if we sync only 2 dirs, `excludeGlobs` shouldn't be modified - globs are added only to `skipGlobs`
 	// this improves UX and is more intuitive
@@ -174,7 +186,7 @@ async function syncFileTrees({
 							)} files`
 						))
 					)
-						copyFileNames.forEach(file => copyFile(tree, file, destination));
+						copyFileNames.forEach(file => copyFile(tree, file, destination, errors));
 					else skipGlobs[destination.rootUuid].add(relativePath(`*${extension}`));
 				} else {
 					// copy only the files that can be in this specific destination
@@ -185,7 +197,7 @@ async function syncFileTrees({
 							twoDirsMode ||
 							(await askYesOrNo(magenta, `\tTo dir ${bold(`#${to}`)}: ${bold(file)}`))
 						)
-							copyFile(tree, file, destination);
+							copyFile(tree, file, destination, errors);
 						else skipGlobs[destination.rootUuid].add(relativePath(file));
 				}
 			}
@@ -225,7 +237,7 @@ async function syncFileTrees({
 					twoDirsMode ||
 					(await askYesOrNo(magenta, `\tTo dir ${bold(`#${to}`)}: ${bold(folder)}`))
 				)
-					copyFolder(tree, folder, destination);
+					copyFolder(tree, folder, destination, errors);
 				else skipGlobs[destination.rootUuid].add(relativePath(folder));
 			}
 		}
@@ -244,6 +256,7 @@ async function syncFileTrees({
 				excludeGlobs,
 				skipGlobs,
 				twoDirsMode,
+				errors,
 			});
 		}
 		// #endregion
@@ -318,12 +331,25 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 
 	// 3) recursively sync directories
 	logColor(green, "Syncing...");
+	const syncErrors: unknown[] = [];
 	await syncFileTrees({
 		fileTrees,
 		excludeGlobs,
 		skipGlobs,
 		twoDirsMode: options.multiple ? false : dirs.length === 2,
+		errors: syncErrors,
 	});
+
+	if (syncErrors.length) {
+		const errorFile = "dirsync.errors.json";
+		logWarning(
+			`${syncErrors.length} error(s) occured. Details are saved to ${path.join(
+				process.cwd(),
+				errorFile
+			)}`
+		);
+		fse.writeFileSync(errorFile, JSON.stringify(syncErrors));
+	}
 
 	// 4) write config file to each directory
 	logColor(green, "Saving configs...");
