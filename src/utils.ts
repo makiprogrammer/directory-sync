@@ -1,11 +1,8 @@
-import fs from "fs";
-import readline from "readline";
-import chalk from "chalk";
+import readline from "node:readline";
+import chalk, { Chalk } from "chalk";
+import minimatch from "minimatch";
 
-import { Diff } from "./folders";
-
-export const systemFiles = new Set(["desktop.ini"]);
-export const systemFolders = new Set(["System Volume Information"]);
+export type UUID = string;
 
 // console-logging utils
 export function logError(message: string) {
@@ -17,6 +14,7 @@ export function logWarning(message: string) {
 export function logColor(message: string) {
 	console.log(chalk.bgMagenta(message));
 }
+// TODO: make logColor a function that takes a color and a message
 export function logGreen(message: string) {
 	console.log(chalk.green(message));
 }
@@ -27,10 +25,10 @@ export function logYellow(message: string) {
 	console.log(chalk.yellow(message));
 }
 
-export async function askYesOrNo(question: string) {
+export async function askYesOrNo(color: Chalk, question: string) {
 	return new Promise(resolve => {
 		const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-		rl.question(question, answer => {
+		rl.question(color(question + " (y/n) "), answer => {
 			rl.close();
 			if (!answer) return resolve(false);
 			if (["y", "yes"].includes(answer.toLowerCase())) return resolve(true);
@@ -43,8 +41,12 @@ export async function askYesOrNo(question: string) {
 export function getDifference<T>(set1: Set<T>, set2: Set<T>) {
 	return new Set([...set1].filter(element => !set2.has(element)));
 }
-export function getIntersection<T>(set1: Set<T>, set2: Set<T>) {
-	return new Set([...set1].filter(element => set2.has(element)));
+export function getIntersection<T>(...sets: Set<T>[]) {
+	if (!sets.length) return new Set<T>();
+	return sets.reduce((curr, acc) => new Set([...curr].filter(element => acc.has(element))));
+}
+export function getUnion<T>(...sets: Set<T>[]) {
+	return new Set(sets.flatMap(set => set.values()));
 }
 
 /** Groups items by a computed primitive value for each item.
@@ -70,6 +72,7 @@ export function groupByValue<T>(
 	return final;
 }
 
-export function isNonEmptyDiff({ filesIn1, filesIn2, foldersIn1, foldersIn2 }: Diff) {
-	return filesIn1.size + filesIn2.size + foldersIn1.size + foldersIn2.size;
+export function globMatch(str: string, patterns: Set<string>) {
+	// minimatch package doesn't work with windows backslashes
+	return [...patterns].some(pattern => minimatch(str, pattern.replace(/\\/g, "/")));
 }
