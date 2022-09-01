@@ -27,6 +27,7 @@ interface DirsyncConfigFile {
 
 interface Options {
 	force?: boolean;
+	multiple?: boolean;
 }
 
 function errorChecking(options: Options, dirs: string[]) {
@@ -321,7 +322,7 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 		fileTrees,
 		excludeGlobs,
 		skipGlobs,
-		twoDirsMode: dirs.length === 2,
+		twoDirsMode: options.multiple ? false : dirs.length === 2,
 	});
 
 	// 4) write config file to each directory
