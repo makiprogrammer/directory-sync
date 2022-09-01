@@ -100,6 +100,7 @@ async function syncFileTrees({
 	for (const i in fileTrees) {
 		const tree = fileTrees[i];
 		const otherTrees = fileTrees.filter(t => t !== tree);
+		const from = Number(i) + 1;
 		const relativePath = (f: string) => path.join(tree.relativePath, f);
 		// approach: ask and copy each file or folder to all other directories where it isn't
 
@@ -120,7 +121,7 @@ async function syncFileTrees({
 				if (
 					await askYesOrNo(
 						magenta,
-						`Dir #${Number(i) + 1}: ${tree.absolutePath}: ${items.length} "${bold(
+						`From dir #${from}: ${tree.absolutePath}: ${items.length} "${bold(
 							extension
 						)}" files`
 					)
@@ -130,7 +131,7 @@ async function syncFileTrees({
 				} else if (
 					await askYesOrNo(
 						red,
-						`Dir #${Number(i) + 1}: ${tree.absolutePath}: Want to ignore ${bold(
+						`From dir #${from}: ${tree.absolutePath}: Want to ignore ${bold(
 							"ALL current & future"
 						)} ${bold(extension)} files in this specific directory?`
 					)
@@ -142,7 +143,7 @@ async function syncFileTrees({
 					if (
 						await askYesOrNo(
 							magenta,
-							`Dir #${Number(i) + 1}: ${path.join(tree.absolutePath, bold(file))}`
+							`From dir #${from}: ${path.join(tree.absolutePath, bold(file))}`
 						)
 					)
 						copyFileNames.push(file);
@@ -155,6 +156,7 @@ async function syncFileTrees({
 				const destination = fileTrees[j];
 				if (tree === destination) continue; // if it's the source tree
 				if (copyFileNames.every(file => destination.files.has(file))) continue; // if it already has all files
+				const to = Number(j) + 1;
 
 				if (asGroup) {
 					if (globMatch(relativePath(`*${extension}`), skipGlobs[destination.rootUuid]))
@@ -163,9 +165,9 @@ async function syncFileTrees({
 						!destinationQuestions ||
 						(await askYesOrNo(
 							magenta,
-							`\tTo dir ${bold("#")}${bold(Number(j) + 1)}: all ${bold(
-								copyFileNames.length
-							)} ${bold(extension)} files`
+							`\tTo dir ${bold(`#${to}`)}: all ${bold(
+								`${copyFileNames.length} ${extension}`
+							)} files`
 						))
 					)
 						copyFileNames.forEach(file => copyFile(tree, file, destination));
@@ -177,10 +179,7 @@ async function syncFileTrees({
 					))
 						if (
 							!destinationQuestions ||
-							(await askYesOrNo(
-								magenta,
-								`\tTo dir ${bold(`#${Number(j) + 1}`)}: ${bold(file)}`
-							))
+							(await askYesOrNo(magenta, `\tTo dir ${bold(`#${to}`)}: ${bold(file)}`))
 						)
 							copyFile(tree, file, destination);
 						else skipGlobs[destination.rootUuid].add(relativePath(file));
@@ -189,7 +188,7 @@ async function syncFileTrees({
 		}
 		// #endregion
 
-		// # region FOLDERS (which are not everywhere they possibly can be)
+		// #region FOLDERS (which are not everywhere they possibly can be)
 		// filter only the folders which aren't present in at least one other directory
 		const suggestedFolders = [...tree.folders].filter(folder =>
 			otherTrees.some(
@@ -203,7 +202,7 @@ async function syncFileTrees({
 			if (
 				!(await askYesOrNo(
 					magenta,
-					`Dir #${Number(i) + 1}: ${path.join(tree.absolutePath, bold(folder))}`
+					`From dir #${from}: ${path.join(tree.absolutePath, bold(folder))}`
 				))
 			) {
 				excludeGlobs[tree.rootUuid].add(relativePath(folder));
@@ -215,19 +214,18 @@ async function syncFileTrees({
 				if (tree === destination) continue; // it's the source tree
 				if (destination.folders.has(folder)) continue; // if it already has the folder
 				if (globMatch(relativePath(folder), skipGlobs[tree.rootUuid])) continue; // the folder can not be copied to this destination
+				const to = Number(j) + 1;
 
 				if (
 					!destinationQuestions ||
-					(await askYesOrNo(
-						magenta,
-						`\tTo dir ${bold(`#${Number(j) + 1}`)}: ${bold(folder)}`
-					))
+					(await askYesOrNo(magenta, `\tTo dir ${bold(`#${to}`)}: ${bold(folder)}`))
 				)
 					// there is no need to also re-compute subDirs of each destination
 					copyFolder(tree, folder, destination);
 				else skipGlobs[destination.rootUuid].add(relativePath(folder));
 			}
 		}
+		// #endregion
 	}
 
 	// sync subdirectories recursively (only folders that were there before dirsync stared)
