@@ -86,13 +86,17 @@ async function syncFileTrees({
 
 		// #region FILES
 		// filter only the files which aren't present in at least one other directory
-		const suggestedFiles = [...tree.files].filter(
-			file =>
-				otherTrees.some(
-					t => !t.files.has(file) && !globMatch(relativePath(file), skipGlobs[t.rootUuid])
-				)
-			// select the file only if it isn't in a possible destination AND can be there (isn't skipped)
-		);
+		const suggestedFiles = [...tree.files]
+			.filter(
+				file =>
+					otherTrees.some(
+						t =>
+							!t.files.has(file) &&
+							!globMatch(relativePath(file), skipGlobs[t.rootUuid])
+					)
+				// select the file only if it isn't in a possible destination AND can be there (isn't skipped)
+			)
+			.sort();
 
 		for (const { value: extension, items } of groupByValue(suggestedFiles, path.extname)) {
 			let copyFileNames: string[] = [];
@@ -178,13 +182,15 @@ async function syncFileTrees({
 
 		// #region FOLDERS (which are not everywhere they possibly can be)
 		// filter only the folders which aren't present in at least one other directory
-		const suggestedFolders = [...tree.folders].filter(folder =>
-			otherTrees.some(
-				t =>
-					!t.folders.has(folder) &&
-					!globMatch(relativePath(folder), skipGlobs[t.rootUuid])
+		const suggestedFolders = [...tree.folders]
+			.filter(folder =>
+				otherTrees.some(
+					t =>
+						!t.folders.has(folder) &&
+						!globMatch(relativePath(folder), skipGlobs[t.rootUuid])
+				)
 			)
-		);
+			.sort();
 
 		for (const folder of suggestedFolders) {
 			if (

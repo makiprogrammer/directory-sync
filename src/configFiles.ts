@@ -36,8 +36,8 @@ export function writeConfingFiles(
 			dirsyncVersion: version,
 			lastSyncDate: new Date().toISOString(),
 			thisDirUuid: tree.rootUuid,
-			excludeFromSync: Array.from(excludeGlobs[tree.rootUuid]),
-			skipSync: Array.from(skipGlobs[tree.rootUuid]),
+			excludeFromSync: Array.from(excludeGlobs[tree.rootUuid]).sort(),
+			skipSync: Array.from(skipGlobs[tree.rootUuid]).sort(),
 		};
 		fse.writeFileSync(path.join(tree.absolutePath, configFileName), JSON.stringify(config));
 	});
