@@ -2,28 +2,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { bold, green, magenta, red } from "chalk";
 import fse from "fs-extra";
-const { version } = require("../package.json");
 
-import { configFileName, FileTree, getFileTreeWithoutIgnoredItems, UUID } from "./diffs";
+import { FileTree, getFileTreeWithoutIgnoredItems, UUID } from "./diffs";
 import { askYesOrNo, globMatch, groupByValue, logColor, logError, logWarning } from "./utils";
-
-interface RootDirectory {
-	/** the UUID of a directory - functions as an id */
-	uuid: string;
-	/** glob files and folders which belong to this directory only and can not be copied anywhere else. */
-	excludeFromSync: string[];
-	/** glob files and folders which can not be copied to this directory. */
-	skipSyncing: string[];
-	// TODO: maybe add presets for local drives, external backup drives, etc.
-	// TODO: ... and from that derive default behaviour
-}
-
-interface DirsyncConfigFile {
-	lastSyncDate: string;
-	dirsyncVersion: string;
-	thisDirUuid: string;
-	dirs: RootDirectory[];
-}
+import { readConfigFiles, writeConfingFiles } from "./configFiles";
 
 interface Options {
 	force?: boolean;
@@ -44,16 +26,6 @@ function errorChecking(options: Options, dirs: string[]) {
 		errors.push("Some directories were specified more than once.");
 	errors.forEach(logError);
 	return errors.length;
-}
-
-function readConfigFiles(dirs: string[]) {
-	return dirs
-		.map(dir => path.join(dir, configFileName))
-		.map(path =>
-			fse.existsSync(path)
-				? (JSON.parse(fse.readFileSync(path, "utf-8")) as DirsyncConfigFile)
-				: undefined
-		);
 }
 
 function copyFile(source: FileTree, file: string, destination: FileTree, errors: unknown[]) {
@@ -274,7 +246,7 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 
 	/* 
 	TIME TO WRITE SOME PSEUDOCODE
-	1) merge all configFiles together to get list of all root dirs (and their uuids and ignored children)
+	1) read all config files and, if none specified, create empty ones
 	2) for each root dir, read all files & directories except excluded and store this file tree,
 	   (cleanup: if something is specified as "excluded" but not present, delete from list)
 	3) recursively go through read files&subdirs and copy them if necessary (if missing)
@@ -282,7 +254,7 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 	4) save new config to each root dir
 	*/
 
-	// 1a) if we have no config file, create an empty one
+	// 1) if we have no config file, create an empty one
 	const uuids = configFiles.map(config => config?.thisDirUuid || randomUUID());
 	const allConfigFiles = configFiles.map(
 		(config, i) =>
@@ -290,33 +262,15 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 				lastSyncDate: "never",
 				dirsyncVersion: "unknown",
 				thisDirUuid: uuids[i],
-				dirs: configFiles.map((_, i2) => ({
-					uuid: uuids[i2],
-					excludeFromSync: [],
-					skipSyncing: [],
-				})),
+				excludeFromSync: [],
+				skipSync: [],
 			}
 	);
-	// 1b) merge `excludeFromSync` and `skipGlobs` lists together - create object with keys uuids and values `RootDirectory`-s
-	const excludeGlobs = groupByValue(
-		allConfigFiles.flatMap(config => config.dirs),
-		dir => dir.uuid
-	).reduce(
-		(curr, { value: uuid, items }) => ({
-			...curr,
-			[uuid as UUID]: new Set(items.flatMap(config => config.excludeFromSync)),
-		}),
-		{} as Record<UUID, Set<string>>
+	const excludeGlobs: Record<UUID, Set<string>> = Object.fromEntries(
+		allConfigFiles.map(config => [config.thisDirUuid, new Set(config.excludeFromSync)])
 	);
-	const skipGlobs = groupByValue(
-		allConfigFiles.flatMap(config => config.dirs),
-		dir => dir.uuid
-	).reduce(
-		(curr, { value: uuid, items }) => ({
-			...curr,
-			[uuid as UUID]: new Set(items.flatMap(config => config.skipSyncing)),
-		}),
-		{} as Record<UUID, Set<string>>
+	const skipGlobs: Record<UUID, Set<string>> = Object.fromEntries(
+		allConfigFiles.map(config => [config.thisDirUuid, new Set(config.skipSync)])
 	);
 
 	// 2) for each root dir, read the file tree
@@ -359,19 +313,7 @@ export default async function syncDirectories(options: Options, dirs: string[]) 
 
 	// 4) write config file to each directory
 	logColor(green, "Saving configs...");
-	dirs.forEach((dir, i) => {
-		const config: DirsyncConfigFile = {
-			dirsyncVersion: version,
-			lastSyncDate: new Date().toISOString(),
-			thisDirUuid: uuids[i],
-			dirs: fileTrees.map(tree => ({
-				uuid: tree.rootUuid,
-				excludeFromSync: Array.from(excludeGlobs[tree.rootUuid]),
-				skipSyncing: Array.from(skipGlobs[tree.rootUuid]),
-			})),
-		};
-		fse.writeFileSync(path.join(dir, configFileName), JSON.stringify(config));
-	});
+	writeConfingFiles(fileTrees, excludeGlobs, skipGlobs);
 
 	logColor(green, "Done!");
 }

@@ -1,8 +1,7 @@
 import path from "node:path";
 import fse from "fs-extra";
 import { globMatch } from "./utils";
-
-export const configFileName = "dirsync.config.json";
+import { configFileName } from "./configFiles";
 
 const systemFiles = new Set(["desktop.ini"]);
 const systemFolders = new Set(["System Volume Information", ".", ".."]);
